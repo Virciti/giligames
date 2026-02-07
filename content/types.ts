@@ -91,7 +91,7 @@ export interface Truck {
 // Levels
 // ============================================================
 
-export type GameMode = 'stadium' | 'race' | 'learn';
+export type GameMode = 'stadium' | 'race' | 'learn' | 'fashion';
 
 export interface LevelBase {
   id: string;
@@ -162,6 +162,97 @@ export interface LearnLevel extends LevelBase {
 }
 
 export type Level = StadiumLevel | RaceLevel | LearnLevel;
+
+// ============================================================
+// Fashion Game Types
+// ============================================================
+
+export type FashionScenarioId =
+  | 'school-day'
+  | 'birthday-party'
+  | 'dance-recital'
+  | 'beach-day'
+  | 'gymnastics-meet'
+  | 'winter-wonderland'
+  | 'pajama-party'
+  | 'fancy-dinner'
+  | 'rainy-day'
+  | 'superhero-day';
+
+export type OutfitCategory =
+  | 'top'
+  | 'bottom'
+  | 'dress'
+  | 'shoes'
+  | 'accessory'
+  | 'hairstyle';
+
+export interface ScenarioCategoryWeight {
+  category: OutfitCategory;
+  weight: number; // 1-5: how much this category matters for this scenario
+  required: boolean;
+}
+
+export interface FashionScenario {
+  id: FashionScenarioId;
+  name: string;
+  description: string;
+  tier: number;
+  unlockStars: number;
+  bgGradient: [string, string];
+  icon: string;
+  categoryWeights: ScenarioCategoryWeight[];
+  appropriateTags: string[];
+  baseFashionPoints: number;
+}
+
+export interface OutfitItem {
+  id: string;
+  name: string;
+  category: OutfitCategory;
+  tier: number; // 1-5
+  cost: number; // fashion points
+  primaryColor: string;
+  secondaryColor?: string;
+  tags: string[];
+  svgKey: string; // key into outfitParts SVG data
+}
+
+export type FashionChallengeType =
+  | 'math-sparkle'
+  | 'word-runway'
+  | 'pattern-match'
+  | 'color-mix'
+  | 'counting-closet'
+  | 'letter-stitch';
+
+export interface FashionChallenge {
+  type: FashionChallengeType;
+  displayName: string;
+  description: string;
+  icon: string;
+  gradient: [string, string];
+  basePoints: number;
+  tierMultiplier: number;
+  contentSource: 'math' | 'words' | 'letters' | 'numbers' | 'custom';
+  minScenarioTier: number;
+}
+
+export type FashionPhase =
+  | 'scenario-select'
+  | 'challenge'
+  | 'shop'
+  | 'dressing-room'
+  | 'fashion-show'
+  | 'results';
+
+export interface OutfitJudgingResult {
+  completenessScore: number;
+  appropriatenessScore: number;
+  bonusScore: number;
+  totalScore: number;
+  stars: number;
+}
 
 // ============================================================
 // Helper Types for Content Selection

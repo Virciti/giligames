@@ -60,6 +60,7 @@ export function ItemBox({ position, onCollect, respawnTime = 5 }: ItemBoxProps) 
           emissiveIntensity={0.5}
           transparent
           opacity={0.9}
+          depthWrite={false}
         />
       </mesh>
 
@@ -170,6 +171,7 @@ export function BoostPad({ position, rotation = 0, onEnter }: BoostPadProps) {
               emissiveIntensity={0.8}
               transparent
               opacity={0.8}
+              depthWrite={false}
             />
           </mesh>
         ))}

@@ -21,17 +21,22 @@ interface AITruckProps {
   trackWidth?: number;
   isRacing?: boolean;
   onPositionUpdate?: (pos: THREE.Vector3, progress: number) => void;
+  spinUntil?: number; // performance.now()/1000 timestamp - truck spins until this time
+  speedMultiplier?: number; // User speed level multiplier (1-10 slider)
 }
 
-// Generate waypoints for oval track
+// Generate waypoints matching the kid-friendly winding track from Track3D
 function generateWaypoints(trackLength: number, trackWidth: number) {
   const points: THREE.Vector3[] = [];
-  const segments = 32;
+  const segments = 48;
 
   for (let i = 0; i < segments; i++) {
     const angle = (i / segments) * Math.PI * 2;
-    const x = Math.cos(angle) * trackLength;
-    const z = Math.sin(angle) * trackWidth;
+    // Match the kid-friendly winding track formula from Track3D
+    let x = Math.cos(angle) * trackLength * 1.3;
+    let z = Math.sin(angle) * trackWidth;
+    x += Math.sin(angle * 2) * 25;
+    z += Math.sin(angle * 3) * 15;
     points.push(new THREE.Vector3(x, WHEEL_RADIUS + 0.5, z));
   }
 
@@ -135,17 +140,20 @@ export function AITruck({
   trackWidth = 60,
   isRacing = false,
   onPositionUpdate,
+  spinUntil = 0,
+  speedMultiplier: userSpeedMultiplier = 1,
 }: AITruckProps) {
   const chassisRef = useRef<RapierRigidBody>(null);
   const currentWaypoint = useRef(0);
   const currentSpeed = useRef(0);
   const currentRotation = useRef(0);
   const trackProgress = useRef(0);
+  const spinPhaseRef = useRef(0);
 
-  // AI difficulty settings
-  const speedMultiplier = difficulty === 'easy' ? 0.7 : difficulty === 'medium' ? 0.85 : 1.0;
-  const maxSpeed = 18 * speedMultiplier;
-  const acceleration = 10 * speedMultiplier;
+  // AI difficulty settings - fast enough to race competitively
+  const difficultyMultiplier = difficulty === 'easy' ? 0.75 : difficulty === 'medium' ? 0.88 : 1.0;
+  const maxSpeed = 38 * difficultyMultiplier * userSpeedMultiplier;
+  const acceleration = 22 * difficultyMultiplier * userSpeedMultiplier;
 
   // Generate track waypoints
   const waypoints = useMemo(
@@ -178,6 +186,25 @@ export function AITruck({
     const chassis = chassisRef.current;
     const pos = chassis.translation();
     const currentPos = new THREE.Vector3(pos.x, pos.y, pos.z);
+
+    // Banana spin behavior - truck spins in circles when hit
+    const nowSec = performance.now() / 1000;
+    if (spinUntil > 0 && nowSec < spinUntil) {
+      // Spin rapidly in place
+      spinPhaseRef.current += 8 * delta;
+      currentSpeed.current *= 0.9; // Slow down quickly
+
+      chassis.setTranslation({ x: pos.x, y: WHEEL_RADIUS + 0.5, z: pos.z }, true);
+      chassis.setRotation(
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(0, spinPhaseRef.current, 0)),
+        true
+      );
+      chassis.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      chassis.setAngvel({ x: 0, y: 0, z: 0 }, true);
+
+      onPositionUpdate?.(currentPos, trackProgress.current);
+      return;
+    }
 
     // Get current target waypoint
     const targetWp = waypoints[currentWaypoint.current];

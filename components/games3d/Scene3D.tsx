@@ -23,19 +23,18 @@ function LoadingFallback() {
   );
 }
 
-// AAA-quality cinematic lighting system
+// Desert sunset cinematic lighting system
 function CinematicLighting({ quality }: { quality: string }) {
-  // Shadow map size based on quality
   const shadowMapSize = quality === 'ultra' ? 4096 : quality === 'high' ? 2048 : 1024;
 
   return (
     <>
-      {/* Key Light - Main sun, warm golden hour color */}
+      {/* Key Light - Low desert sun, warm golden hour */}
       <directionalLight
         castShadow
-        position={[80, 120, 60]}
-        intensity={2.0}
-        color="#FFF8F0"
+        position={[100, 40, 80]}
+        intensity={2.2}
+        color="#FFD4A0"
         shadow-mapSize={[shadowMapSize, shadowMapSize]}
         shadow-camera-near={0.5}
         shadow-camera-far={500}
@@ -47,45 +46,45 @@ function CinematicLighting({ quality }: { quality: string }) {
         shadow-normalBias={0.02}
       />
 
-      {/* Secondary Key - Stadium flood light effect */}
+      {/* Secondary Key - Warm sunset bounce */}
       <directionalLight
         castShadow={quality !== 'low'}
-        position={[-50, 80, -30]}
-        intensity={0.8}
-        color="#FFFAF5"
+        position={[-50, 60, -30]}
+        intensity={0.6}
+        color="#FFE0B2"
         shadow-mapSize={[1024, 1024]}
         shadow-bias={-0.0001}
       />
 
-      {/* Fill Light - Cool blue to balance shadows */}
+      {/* Fill Light - Warm sky bounce instead of cool blue */}
       <directionalLight
         position={[-60, 40, -40]}
-        intensity={0.5}
-        color="#B4D4E7"
+        intensity={0.4}
+        color="#FFDAB9"
       />
 
-      {/* Rim/Back Light - Creates edge highlights on trucks */}
+      {/* Rim/Back Light - Strong golden edge highlights */}
       <directionalLight
         position={[0, 30, -100]}
-        intensity={0.7}
-        color="#FFE4C4"
+        intensity={0.8}
+        color="#FFB870"
       />
 
-      {/* Ground bounce light */}
+      {/* Ground bounce - warm desert sand reflection */}
       <directionalLight
         position={[0, -10, 0]}
-        intensity={0.15}
-        color="#8B7355"
+        intensity={0.25}
+        color="#D4A06A"
       />
 
-      {/* Ambient - Soft overall illumination */}
-      <ambientLight intensity={0.4} color="#E8ECFF" />
+      {/* Ambient - Warm desert illumination */}
+      <ambientLight intensity={0.5} color="#FFE8D0" />
 
-      {/* Hemisphere - Sky/ground color blend */}
+      {/* Hemisphere - Warm sky to desert sand */}
       <hemisphereLight
-        color="#87CEEB"
-        groundColor="#5A4A31"
-        intensity={0.6}
+        color="#FFC89E"
+        groundColor="#C4956A"
+        intensity={0.7}
       />
     </>
   );
@@ -113,7 +112,7 @@ export function Scene3D({
       }}
       style={{ background: '#1a1a2e' }}
       onCreated={({ gl }) => {
-        gl.setClearColor('#87CEEB');
+        gl.setClearColor('#E8C49A');
         gl.shadowMap.enabled = true;
         gl.shadowMap.type = 2; // PCFSoftShadowMap
       }}
@@ -125,13 +124,13 @@ export function Scene3D({
       {showSky && (
         <Sky
           distance={450000}
-          sunPosition={[100, 50, 80]}
-          inclination={0.55}
-          azimuth={0.25}
-          turbidity={6}
-          rayleigh={0.4}
-          mieCoefficient={0.005}
-          mieDirectionalG={0.8}
+          sunPosition={[150, 25, 100]}
+          inclination={0.48}
+          azimuth={0.2}
+          turbidity={10}
+          rayleigh={0.8}
+          mieCoefficient={0.01}
+          mieDirectionalG={0.95}
         />
       )}
 
@@ -153,8 +152,8 @@ export function Scene3D({
         color="#000000"
       />
 
-      {/* Atmospheric fog - gives depth */}
-      <fog attach="fog" args={['#C5D8E8', 100, 500]} />
+      {/* Desert atmospheric haze */}
+      <fog attach="fog" args={['#D4A874', 80, 450]} />
 
       {/* Physics World */}
       <Suspense fallback={<LoadingFallback />}>

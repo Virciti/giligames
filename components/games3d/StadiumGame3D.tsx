@@ -8,6 +8,19 @@ import { MonsterTruck } from './MonsterTruck';
 import { FollowCamera } from './FollowCamera';
 import { Star, Home, RotateCcw, Pause, Play } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { usePlayerStore } from '@/lib/stores/player-store';
+import { getTruckById } from '@/content/trucks';
+
+// Map truck IDs to 3D visual styles
+const TRUCK_STYLE_MAP: Record<string, string> = {
+  'truck-red-rocket': 'classic',
+  'truck-blue-thunder': 'shark',
+  'truck-golden-crusher': 'stars',
+  'truck-green-machine': 'dragon',
+  'truck-purple-power': 'flames',
+  'truck-orange-blaze': 'bull',
+  'truck-rainbow-racer': 'stars',
+};
 
 interface StadiumGame3DProps {
   onExit?: () => void;
@@ -218,6 +231,12 @@ function StadiumHUD({
 }
 
 export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
+  // Read player's selected truck from store
+  const selectedTruckId = usePlayerStore((s) => s.selectedTruck);
+  const truckData = getTruckById(selectedTruckId);
+  const playerTruckColor = truckData?.color ?? '#FF6B6B';
+  const playerTruckStyle = TRUCK_STYLE_MAP[selectedTruckId] ?? 'classic';
+
   const [isPaused, setIsPaused] = useState(false);
   const [time, setTime] = useState(0);
   const [starsCollected, setStarsCollected] = useState(0);
@@ -368,11 +387,12 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
           />
         ))}
 
-        {/* Player truck */}
+        {/* Player truck - uses selected truck from store */}
         <MonsterTruck
           position={[0, 2, 0]}
           rotation={[0, 0, 0]}
-          color="#FF6B6B"
+          color={playerTruckColor}
+          truckStyle={playerTruckStyle as 'flames' | 'shark' | 'classic' | 'dragon' | 'stars'}
           inputState={isPaused ? undefined : inputState}
           onPositionUpdate={handlePositionUpdate}
           isPlayer
