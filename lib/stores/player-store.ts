@@ -57,6 +57,9 @@ interface PlayerActions {
   updatePlayTime: (seconds: number) => void;
   updateStreak: () => void;
 
+  // Profile seeding
+  ensureProfiles: () => void;
+
   // Data management
   resetProgress: () => void;
   loadFromStorage: () => void;
@@ -378,6 +381,37 @@ export const usePlayerStore = create<PlayerStore>()(
             };
           }
         });
+      },
+
+      // --------------------------------------------------------
+      // Profile Seeding
+      // --------------------------------------------------------
+
+      ensureProfiles: () => {
+        const state = get();
+        const hasLiam = state.profiles.some((p) => p.id === 'profile-liam');
+        const hasGianna = state.profiles.some((p) => p.id === 'profile-gianna');
+
+        if (!hasLiam || !hasGianna) {
+          const profiles = [...state.profiles];
+          if (!hasLiam) {
+            profiles.push({
+              id: 'profile-liam',
+              name: 'Liam',
+              avatarTruck: 'truck-red-rocket',
+              createdAt: Date.now(),
+            });
+          }
+          if (!hasGianna) {
+            profiles.push({
+              id: 'profile-gianna',
+              name: 'Gianna',
+              avatarTruck: 'truck-blue-thunder',
+              createdAt: Date.now(),
+            });
+          }
+          set({ profiles });
+        }
       },
 
       // --------------------------------------------------------

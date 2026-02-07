@@ -1,11 +1,11 @@
 'use client';
 
-import { useRef, useMemo } from 'react';
+import React, { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
 interface DustTrailProps {
-  position: THREE.Vector3;
+  positionRef: React.RefObject<THREE.Vector3>;
   speed: number;
   isActive: boolean;
   color?: string;
@@ -14,14 +14,14 @@ interface DustTrailProps {
 const PARTICLE_COUNT = 50;
 const PARTICLE_LIFETIME = 1.5;
 
-export function DustTrail({ position, speed, isActive, color = '#8B7355' }: DustTrailProps) {
+export function DustTrail({ positionRef, speed, isActive, color = '#8B7355' }: DustTrailProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const particlesRef = useRef<{
     positions: Float32Array;
     velocities: Float32Array;
     lifetimes: Float32Array;
     scales: Float32Array;
-  }>();
+  } | null>(null);
 
   // Initialize particle data
   useMemo(() => {
@@ -82,9 +82,10 @@ export function DustTrail({ position, speed, isActive, color = '#8B7355' }: Dust
         lifetimes[i] = PARTICLE_LIFETIME * (0.7 + Math.random() * 0.3);
 
         // Spawn at wheel position with random offset
-        positions[i3] = position.x + (Math.random() - 0.5) * 2;
-        positions[i3 + 1] = position.y + Math.random() * 0.5;
-        positions[i3 + 2] = position.z + (Math.random() - 0.5) * 2;
+        const pos = positionRef.current;
+        positions[i3] = pos.x + (Math.random() - 0.5) * 2;
+        positions[i3 + 1] = pos.y + Math.random() * 0.5;
+        positions[i3 + 2] = pos.z + (Math.random() - 0.5) * 2;
 
         // Random velocity - mostly outward and up
         velocities[i3] = (Math.random() - 0.5) * 3;

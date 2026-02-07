@@ -1,14 +1,13 @@
 'use client';
 
-import { useRef, useMemo } from 'react';
+import React, { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
 interface ExhaustSmokeProps {
-  leftPipePosition: THREE.Vector3;
-  rightPipePosition: THREE.Vector3;
+  pipePositionRef: React.RefObject<THREE.Vector3>;
   truckRotation: number;
-  throttle: number; // 0-1, how much gas is being applied
+  throttleRef: React.RefObject<number>;
   isActive: boolean;
 }
 
@@ -16,10 +15,9 @@ const PARTICLE_COUNT = 30;
 const PARTICLE_LIFETIME = 2.0;
 
 export function ExhaustSmoke({
-  leftPipePosition,
-  rightPipePosition,
+  pipePositionRef,
   truckRotation,
-  throttle,
+  throttleRef,
   isActive
 }: ExhaustSmokeProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
@@ -29,7 +27,7 @@ export function ExhaustSmoke({
     lifetimes: Float32Array;
     scales: Float32Array;
     opacities: Float32Array;
-  }>();
+  } | null>(null);
 
   useMemo(() => {
     particlesRef.current = {
@@ -51,6 +49,7 @@ export function ExhaustSmoke({
     if (!meshRef.current || !particlesRef.current) return;
 
     const { positions, velocities, lifetimes, scales } = particlesRef.current;
+    const throttle = throttleRef.current;
     const intensity = isActive ? 0.3 + throttle * 0.7 : 0.1;
     const spawnRate = intensity * 8;
     let spawned = 0;
@@ -86,7 +85,7 @@ export function ExhaustSmoke({
 
         // Alternate between left and right pipe
         const useLeftPipe = i % 2 === 0;
-        const pipePos = useLeftPipe ? leftPipePosition : rightPipePosition;
+        const pipePos = pipePositionRef.current;
 
         // Calculate world position based on truck rotation
         const offsetX = Math.sin(truckRotation) * -1.15 * (useLeftPipe ? 1 : -1);

@@ -18,7 +18,7 @@ import { load, saveImmediate } from '../persist/storage';
 // Types
 // ============================================================
 
-export type GameType = 'stadium' | 'race' | 'learn' | null;
+export type GameType = 'stadium' | 'race' | 'learn' | 'fashion' | null;
 export type Difficulty = 'easy' | 'medium' | 'hard';
 export type ControlLayout = 'left' | 'right' | 'both';
 

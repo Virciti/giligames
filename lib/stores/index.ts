@@ -17,6 +17,13 @@ export {
   type PlayerStore,
 } from './player-store';
 
+// Learning Challenge Store - in-race educational challenge state
+export {
+  useLearningChallengeStore,
+  type LearningCategory,
+  type LearningChallengeStore,
+} from './learning-game-store';
+
 // Game Store - runtime state and settings
 export {
   useGameStore,

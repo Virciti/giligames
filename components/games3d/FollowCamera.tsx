@@ -15,8 +15,8 @@ interface FollowCameraProps {
 export function FollowCamera({
   target,
   targetRotation,
-  offset = new THREE.Vector3(0, 4, -8),
-  lookAhead = 10,
+  offset = new THREE.Vector3(0, 5, -10),
+  lookAhead = 12,
   smoothness = 0.08,
 }: FollowCameraProps) {
   const { camera } = useThree();
@@ -24,7 +24,7 @@ export function FollowCamera({
   const currentLookAt = useRef(new THREE.Vector3());
   const isInitialized = useRef(false);
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     if (!target) return;
 
     const rotationY = targetRotation?.y || 0;
@@ -46,7 +46,7 @@ export function FollowCamera({
 
     const idealLookAt = new THREE.Vector3(
       target.x + aheadX,
-      target.y + 1,
+      target.y + 1.5,
       target.z + aheadZ
     );
 
@@ -60,9 +60,13 @@ export function FollowCamera({
       return;
     }
 
-    // Smooth interpolation for camera position
-    currentPosition.current.lerp(idealPosition, smoothness);
-    currentLookAt.current.lerp(idealLookAt, smoothness);
+    // Frame-rate independent smooth follow using delta time
+    // At 60fps this gives ~0.55 blend per frame — tight racing-game tracking
+    const posSmooth = 1 - Math.pow(0.001, delta);
+    const lookSmooth = 1 - Math.pow(0.0005, delta);
+
+    currentPosition.current.lerp(idealPosition, posSmooth);
+    currentLookAt.current.lerp(idealLookAt, lookSmooth);
 
     // Apply to camera
     camera.position.copy(currentPosition.current);

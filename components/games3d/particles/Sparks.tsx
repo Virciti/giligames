@@ -17,7 +17,7 @@ export function Sparks({ onSparkRequest }: SparksProps) {
     positions: Float32Array;
     velocities: Float32Array;
     lifetimes: Float32Array;
-  }>();
+  } | null>(null);
 
   useMemo(() => {
     particlesRef.current = {

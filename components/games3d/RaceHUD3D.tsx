@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Pause, Play, RotateCcw, Home, Gauge, Trophy, Flag, Timer } from 'lucide-react';
+import type { LearningCategory } from '@/lib/stores/learning-game-store';
 
 type PowerUpType = 'boost' | 'shield' | 'star' | 'mushroom' | 'lightning' | null;
 
@@ -27,6 +28,17 @@ interface RaceHUD3DProps {
   onRestart: () => void;
   onExit: () => void;
   onUseItem?: () => void;
+  // Learning challenge props
+  learningActive?: boolean;
+  learningBannerText?: string;
+  learningCategory?: LearningCategory;
+  learningScore?: number;
+  learningStreak?: number;
+  learningTimer?: number;
+  learningTimerTotal?: number;
+  learningCorrectCount?: number;
+  learningTargetCount?: number;
+  learningScorePopups?: number[]; // timestamps of recent correct collections
 }
 
 function formatTime(seconds: number): string {
@@ -396,6 +408,141 @@ function FinishScreen({
   );
 }
 
+// ============================================================
+// Learning Challenge HUD Components
+// ============================================================
+
+function LearningBanner({
+  text,
+  category,
+  timer,
+  timerTotal,
+}: {
+  text: string;
+  category: LearningCategory;
+  timer: number;
+  timerTotal: number;
+}) {
+  const categoryLabels: Record<LearningCategory, string> = {
+    numbers: '#',
+    letters: 'ABC',
+    words: 'Aa',
+    math: '+',
+  };
+
+  const timerPercent = timerTotal > 0 ? (timer / timerTotal) * 100 : 100;
+
+  return (
+    <div className="fixed top-16 left-1/2 -translate-x-1/2 z-40 pointer-events-none">
+      <motion.div
+        initial={{ y: -20, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ type: 'spring', damping: 20 }}
+        className="bg-gradient-to-r from-purple-600/90 via-blue-600/90 to-purple-600/90 backdrop-blur-sm rounded-2xl px-8 py-3 border-2 border-white/40 shadow-2xl"
+      >
+        <div className="flex items-center gap-3">
+          <span className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-white font-black text-sm">
+            {categoryLabels[category]}
+          </span>
+          <span
+            className="text-2xl font-black text-white"
+            style={{ textShadow: '2px 2px 0 rgba(0,0,0,0.5)' }}
+          >
+            {text}
+          </span>
+        </div>
+        {/* Timer bar */}
+        <div className="mt-2 h-1.5 bg-white/20 rounded-full overflow-hidden">
+          <motion.div
+            className="h-full rounded-full"
+            style={{
+              width: `${timerPercent}%`,
+              background: timerPercent > 50
+                ? 'linear-gradient(to right, #4ade80, #a3e635)'
+                : timerPercent > 25
+                  ? 'linear-gradient(to right, #facc15, #fb923c)'
+                  : 'linear-gradient(to right, #f87171, #ef4444)',
+            }}
+            transition={{ duration: 0.3 }}
+          />
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function LearningScoreDisplay({
+  score,
+  streak,
+  correctCount,
+  targetCount,
+}: {
+  score: number;
+  streak: number;
+  correctCount: number;
+  targetCount: number;
+}) {
+  return (
+    <div className="fixed top-20 left-4 z-40 pointer-events-none space-y-2">
+      {/* Score */}
+      <div className="bg-purple-600/80 backdrop-blur-sm rounded-lg px-4 py-2 border-2 border-purple-300/30">
+        <div className="text-white/80 text-xs font-bold">LEARN</div>
+        <div
+          className="text-2xl font-black text-white"
+          style={{ textShadow: '2px 2px 0 rgba(0,0,0,0.5)' }}
+        >
+          {score.toLocaleString()}
+        </div>
+      </div>
+
+      {/* Progress */}
+      <div className="bg-green-600/70 backdrop-blur-sm rounded-lg px-3 py-1.5 border border-green-300/30">
+        <div className="text-white text-sm font-bold">
+          {correctCount} / {targetCount} found
+        </div>
+      </div>
+
+      {/* Streak */}
+      <AnimatePresence>
+        {streak >= 2 && (
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            exit={{ scale: 0 }}
+            className="bg-orange-500/80 backdrop-blur-sm rounded-lg px-3 py-1.5 border border-orange-300/30"
+          >
+            <div
+              className="text-white text-sm font-bold"
+              style={{ textShadow: '1px 1px 0 rgba(0,0,0,0.4)' }}
+            >
+              {streak}x STREAK
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function FloatingScorePopup({ value, id }: { value: number; id: number }) {
+  return (
+    <motion.div
+      key={id}
+      initial={{ y: 0, opacity: 1, scale: 0.5 }}
+      animate={{ y: -80, opacity: 0, scale: 1.5 }}
+      transition={{ duration: 1.2, ease: 'easeOut' }}
+      className="fixed top-1/3 left-1/2 -translate-x-1/2 z-50 pointer-events-none"
+    >
+      <span
+        className="text-5xl font-black text-green-400"
+        style={{ textShadow: '3px 3px 0 rgba(0,0,0,0.5)' }}
+      >
+        +{value}
+      </span>
+    </motion.div>
+  );
+}
+
 export function RaceHUD3D({
   speed,
   maxSpeed,
@@ -417,9 +564,50 @@ export function RaceHUD3D({
   onRestart,
   onExit,
   onUseItem,
+  learningActive = false,
+  learningBannerText,
+  learningCategory,
+  learningScore = 0,
+  learningStreak = 0,
+  learningTimer = 0,
+  learningTimerTotal = 150,
+  learningCorrectCount = 0,
+  learningTargetCount = 5,
+  learningScorePopups = [],
 }: RaceHUD3DProps) {
   return (
     <>
+      {/* Learning Banner - top center below mode toggle */}
+      {learningActive && learningBannerText && learningCategory && (
+        <LearningBanner
+          text={learningBannerText}
+          category={learningCategory}
+          timer={learningTimer}
+          timerTotal={learningTimerTotal}
+        />
+      )}
+
+      {/* Learning Score Display - left side below TIME */}
+      {learningActive && (
+        <LearningScoreDisplay
+          score={learningScore}
+          streak={learningStreak}
+          correctCount={learningCorrectCount}
+          targetCount={learningTargetCount}
+        />
+      )}
+
+      {/* Floating score popups */}
+      <AnimatePresence>
+        {learningScorePopups.map((timestamp) => (
+          <FloatingScorePopup
+            key={timestamp}
+            id={timestamp}
+            value={100 * Math.max(1, learningStreak)}
+          />
+        ))}
+      </AnimatePresence>
+
       {/* Top left - TIME */}
       <div className="fixed top-4 left-4 z-40 pointer-events-none">
         <div className="bg-blue-600/90 backdrop-blur-sm rounded-lg px-4 py-2 border-2 border-white/30">

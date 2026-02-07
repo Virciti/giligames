@@ -1,11 +1,11 @@
 'use client';
 
-import { useRef, useMemo } from 'react';
+import React, { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
 interface BoostFlameProps {
-  position: THREE.Vector3;
+  positionRef: React.RefObject<THREE.Vector3>;
   rotation: number;
   isActive: boolean;
   intensity?: number;
@@ -15,7 +15,7 @@ const PARTICLE_COUNT = 50;
 const PARTICLE_LIFETIME = 0.4;
 
 export function BoostFlame({
-  position,
+  positionRef,
   rotation,
   isActive,
   intensity = 1
@@ -26,7 +26,7 @@ export function BoostFlame({
     velocities: Float32Array;
     lifetimes: Float32Array;
     colors: Float32Array;
-  }>();
+  } | null>(null);
 
   useMemo(() => {
     particlesRef.current = {
@@ -97,11 +97,12 @@ export function BoostFlame({
         const backOffset = -2.2; // Behind the truck
 
         // Calculate world position based on truck rotation
-        const spawnX = position.x + Math.sin(rotation) * backOffset + Math.cos(rotation) * side * 0.8;
-        const spawnZ = position.z + Math.cos(rotation) * backOffset - Math.sin(rotation) * side * 0.8;
+        const pos = positionRef.current;
+        const spawnX = pos.x + Math.sin(rotation) * backOffset + Math.cos(rotation) * side * 0.8;
+        const spawnZ = pos.z + Math.cos(rotation) * backOffset - Math.sin(rotation) * side * 0.8;
 
         positions[i3] = spawnX + (Math.random() - 0.5) * 0.3;
-        positions[i3 + 1] = position.y + 0.5 + Math.random() * 0.2;
+        positions[i3 + 1] = pos.y + 0.5 + Math.random() * 0.2;
         positions[i3 + 2] = spawnZ + (Math.random() - 0.5) * 0.3;
 
         // Velocity - shoot backward from truck

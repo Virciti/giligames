@@ -122,10 +122,21 @@ export function createDefaultProfile(name: string = 'Player 1'): PlayerProfile {
 }
 
 export function createDefaultPlayerState(): PlayerState {
-  const defaultProfile = createDefaultProfile();
+  const liamProfile: PlayerProfile = {
+    id: 'profile-liam',
+    name: 'Liam',
+    avatarTruck: 'truck-red-rocket',
+    createdAt: Date.now(),
+  };
+  const giannaProfile: PlayerProfile = {
+    id: 'profile-gianna',
+    name: 'Gianna',
+    avatarTruck: 'truck-blue-thunder',
+    createdAt: Date.now(),
+  };
   return {
-    activeProfileId: defaultProfile.id,
-    profiles: [defaultProfile],
+    activeProfileId: '',
+    profiles: [liamProfile, giannaProfile],
     selectedTruck: 'truck-red-rocket',
     totalStars: 0,
     unlockedTrucks: ['truck-red-rocket', 'truck-blue-thunder'],

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { Scene3D } from './Scene3D';
 import { MonsterTruck } from './MonsterTruck';
@@ -10,6 +11,21 @@ import { FollowCamera } from './FollowCamera';
 import { RaceHUD3D } from './RaceHUD3D';
 import { ItemBox, Collectible, BoostPad, PowerUpType } from './ItemBox';
 import { JumpArena } from './JumpArena';
+import { LearningCoinManager } from './LearningCoinManager';
+import { usePlayerStore } from '@/lib/stores/player-store';
+import { useLearningChallengeStore } from '@/lib/stores/learning-game-store';
+import { getTruckById } from '@/content/trucks';
+
+// Map truck IDs to 3D visual styles
+const TRUCK_STYLE_MAP: Record<string, string> = {
+  'truck-red-rocket': 'classic',
+  'truck-blue-thunder': 'shark',
+  'truck-golden-crusher': 'stars',
+  'truck-green-machine': 'dragon',
+  'truck-purple-power': 'flames',
+  'truck-orange-blaze': 'bull',
+  'truck-rainbow-racer': 'stars',
+};
 
 interface RaceGame3DProps {
   onExit?: () => void;
@@ -22,11 +38,15 @@ type GameMode = 'race' | 'jump';
 function generateItemBoxPositions(trackLength: number, trackWidth: number): [number, number, number][] {
   const positions: [number, number, number][] = [];
   const count = 8;
+  const startX = trackLength * 1.3; // start/finish line x
+  const exclusionSq = 35 * 35;
 
   for (let i = 0; i < count; i++) {
     const angle = (i / count) * Math.PI * 2;
     const x = Math.cos(angle) * trackLength;
     const z = Math.sin(angle) * trackWidth;
+    const dx = x - startX;
+    if (dx * dx + z * z < exclusionSq) continue;
     positions.push([x, 3, z]);
   }
 
@@ -37,12 +57,16 @@ function generateItemBoxPositions(trackLength: number, trackWidth: number): [num
 function generateCoinPositions(trackLength: number, trackWidth: number): [number, number, number][] {
   const positions: [number, number, number][] = [];
   const count = 24;
+  const startX = trackLength * 1.3;
+  const exclusionSq = 35 * 35;
 
   for (let i = 0; i < count; i++) {
     const angle = (i / count) * Math.PI * 2;
     const offset = (i % 3 - 1) * 3; // -3, 0, or 3 offset from center
     const x = Math.cos(angle) * trackLength;
     const z = Math.sin(angle) * trackWidth + offset;
+    const dx = x - startX;
+    if (dx * dx + z * z < exclusionSq) continue;
     positions.push([x, 1.5, z]);
   }
 
@@ -87,7 +111,95 @@ function ModeToggle({ mode, onModeChange }: { mode: GameMode; onModeChange: (mod
   );
 }
 
+// === BANANA POWER-UP COMPONENTS ===
+
+// Hovering banana pickup - bright yellow curved banana shape
+function BananaPickup({ position }: { position: [number, number, number] }) {
+  const meshRef = useRef<THREE.Group>(null);
+
+  useFrame((state) => {
+    if (!meshRef.current) return;
+    // Gentle hover bob and spin
+    meshRef.current.position.y = position[1] + Math.sin(state.clock.elapsedTime * 2.5 + position[0]) * 0.4;
+    meshRef.current.rotation.y += 0.03;
+  });
+
+  return (
+    <group ref={meshRef} position={position}>
+      {/* Banana body - curved using torus segment */}
+      <mesh rotation={[0, 0, Math.PI / 4]} castShadow>
+        <torusGeometry args={[0.6, 0.22, 8, 16, Math.PI * 0.7]} />
+        <meshStandardMaterial
+          color="#FFE135"
+          emissive="#FFD700"
+          emissiveIntensity={0.4}
+          roughness={0.4}
+          metalness={0.1}
+        />
+      </mesh>
+      {/* Banana tip */}
+      <mesh position={[0.35, 0.35, 0]} rotation={[0, 0, 0.8]}>
+        <coneGeometry args={[0.1, 0.25, 6]} />
+        <meshStandardMaterial color="#8B6914" roughness={0.6} />
+      </mesh>
+      {/* Banana stem */}
+      <mesh position={[-0.35, 0.35, 0]} rotation={[0, 0, -0.8]}>
+        <coneGeometry args={[0.08, 0.2, 6]} />
+        <meshStandardMaterial color="#6B4226" roughness={0.7} />
+      </mesh>
+      {/* Glow */}
+      <pointLight color="#FFD700" intensity={1.5} distance={6} />
+    </group>
+  );
+}
+
+// Thrown banana projectile that arcs toward an AI truck
+function ThrownBananaProjectile({ from, to }: {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  startTime: number;
+  gameClock: number;
+}) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const elapsedRef = useRef(0);
+  const flightDuration = 0.8; // seconds to reach target
+
+  useFrame((_, delta) => {
+    if (!meshRef.current) return;
+    elapsedRef.current += delta;
+
+    // Arc from player to AI truck
+    const progress = Math.min(elapsedRef.current / flightDuration, 1);
+    const x = from.x + (to.x - from.x) * progress;
+    const z = from.z + (to.z - from.z) * progress;
+    // Parabolic arc upward
+    const arcHeight = 8 * progress * (1 - progress);
+    const y = from.y + arcHeight;
+
+    meshRef.current.position.set(x, y, z);
+    meshRef.current.rotation.x += 0.2;
+    meshRef.current.rotation.z += 0.15;
+  });
+
+  return (
+    <mesh ref={meshRef} position={[from.x, from.y, from.z]}>
+      <torusGeometry args={[0.5, 0.18, 8, 12, Math.PI * 0.7]} />
+      <meshStandardMaterial
+        color="#FFE135"
+        emissive="#FFAA00"
+        emissiveIntensity={0.8}
+      />
+    </mesh>
+  );
+}
+
 export function RaceGame3D({ onExit }: RaceGame3DProps) {
+  // Read player's selected truck from store
+  const selectedTruckId = usePlayerStore((s) => s.selectedTruck);
+  const truckData = getTruckById(selectedTruckId);
+  const playerTruckColor = truckData?.color ?? '#FF6B6B';
+  const playerTruckStyle = TRUCK_STYLE_MAP[selectedTruckId] ?? 'classic';
+
   const [gameMode, setGameMode] = useState<GameMode>('race');
   const [phase, setPhase] = useState<GamePhase>('countdown');
   const [countdown, setCountdown] = useState<number | null>(3);
@@ -99,13 +211,55 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
   const [currentItem, setCurrentItem] = useState<PowerUpType | null>(null);
   const [trickScore, setTrickScore] = useState(0);
 
+  // Speed level slider (1-10) - Level 5 = 1.0x (default), Level 10 = 2.0x (lightning fast)
+  const [speedLevel, setSpeedLevel] = useState(5);
+  const speedMultiplier = 0.2 + (speedLevel - 1) * 0.2; // 1=0.2x, 5=1.0x, 10=2.0x
+
   // Track parameters - longer winding track for more fun
   const trackLength = 120;
   const trackWidth = 70;
 
+  // NASCAR grid starting positions (at the track's easternmost point ~x=156)
+  // 2-wide formation like real NASCAR: rows of 2 trucks, staggered
+  const RACE_START_ROTATION = 0.4; // Face along track direction at start/finish
+  const GRID_POSITIONS: [number, number, number][] = [
+    [150, 2, -3],   // P1 - Pole position (player) - front row inside
+    [160, 2, -3],   // P2 - Front row outside
+    [150, 2, -17],  // P3 - Second row inside
+    [160, 2, -17],  // P4 - Second row outside
+  ];
+
+  // === BANANA POWER-UP SYSTEM STATE ===
+  // Bananas hovering in a line past the start/finish line
+  const BANANA_POSITIONS: [number, number, number][] = [
+    [-148, 2.5, -8], [-151, 2.5, -5], [-154, 2.5, -2],
+    [-157, 2.5, 1],  [-160, 2.5, 4],  [-163, 2.5, 7],
+  ];
+  const [collectedBananas, setCollectedBananas] = useState<Set<number>>(new Set());
+  const [bananaScoreCount, setBananaScoreCount] = useState(0);
+  const [aiSpinUntil, setAiSpinUntil] = useState<number[]>([0, 0, 0]);
+  const [thrownBanana, setThrownBanana] = useState<{
+    from: THREE.Vector3;
+    to: THREE.Vector3;
+    targetAI: number;
+    startTime: number;
+  } | null>(null);
+  const bananaRespawnTimers = useRef<number[]>(new Array(BANANA_POSITIONS.length).fill(0));
+  const aiPositionsRef = useRef<THREE.Vector3[]>([
+    new THREE.Vector3(GRID_POSITIONS[1][0], GRID_POSITIONS[1][1], GRID_POSITIONS[1][2]),
+    new THREE.Vector3(GRID_POSITIONS[2][0], GRID_POSITIONS[2][1], GRID_POSITIONS[2][2]),
+    new THREE.Vector3(GRID_POSITIONS[3][0], GRID_POSITIONS[3][1], GRID_POSITIONS[3][2]),
+  ]);
+  const gameClockRef = useRef(0);
+
   // Vehicle state
-  const [truckPosition, setTruckPosition] = useState(new THREE.Vector3(100, 2, 0));
-  const [truckRotation, setTruckRotation] = useState(new THREE.Euler(0, 0, 0));
+  const [truckPosition, setTruckPosition] = useState(new THREE.Vector3(GRID_POSITIONS[0][0], GRID_POSITIONS[0][1], GRID_POSITIONS[0][2]));
+  const [truckRotation, setTruckRotation] = useState(new THREE.Euler(0, RACE_START_ROTATION, 0));
+  const truckPositionRef = useRef(new THREE.Vector3(GRID_POSITIONS[0][0], GRID_POSITIONS[0][1], GRID_POSITIONS[0][2]));
+
+  // Learning challenge state
+  const learningStore = useLearningChallengeStore();
+  const [scorePopups, setScorePopups] = useState<number[]>([]);
 
   // AI truck progress tracking for position calculation
   const aiProgressRef = useRef<number[]>([0, 0, 0]);
@@ -266,6 +420,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
 
     const timer = setInterval(() => {
       setRaceTime((prev) => prev + 0.1);
+      useLearningChallengeStore.getState().tickTimer(0.1);
     }, 100);
 
     return () => clearInterval(timer);
@@ -274,6 +429,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
   // Handle position update from truck
   const handlePositionUpdate = useCallback((pos: THREE.Vector3, rot: THREE.Euler, spd: number) => {
     setTruckPosition(pos);
+    truckPositionRef.current.copy(pos);
     setTruckRotation(rot);
     setSpeed(spd * 1.5);
 
@@ -281,9 +437,10 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     playerProgressRef.current = calculateProgress(pos);
   }, [calculateProgress]);
 
-  // Handle AI position updates
+  // Handle AI position updates - also track positions for banana targeting
   const handleAIPositionUpdate = useCallback((index: number) => (pos: THREE.Vector3, progress: number) => {
     aiProgressRef.current[index] = progress;
+    aiPositionsRef.current[index].copy(pos);
   }, []);
 
   // Handle item collection
@@ -320,6 +477,104 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     setCurrentItem(null);
   }, [currentItem]);
 
+  // === LEARNING COIN COLLECTION HANDLERS ===
+  const handleLearningCorrectCollect = useCallback(() => {
+    const store = useLearningChallengeStore.getState();
+    store.collectCorrect(store.currentItemId);
+    // Show floating score popup
+    setScorePopups((prev) => [...prev.slice(-4), Date.now()]);
+    // Clean up old popups after animation
+    setTimeout(() => {
+      setScorePopups((prev) => prev.slice(1));
+    }, 1500);
+  }, []);
+
+  const handleLearningIncorrectCollect = useCallback((itemId: string) => {
+    useLearningChallengeStore.getState().collectIncorrect(itemId);
+  }, []);
+
+  // Start learning challenge on mount and when restarting
+  useEffect(() => {
+    useLearningChallengeStore.getState().startLearningChallenge();
+  }, []);
+
+  // === BANANA COLLECTION & THROW LOGIC ===
+  // Check banana proximity and handle collection each frame
+  useEffect(() => {
+    if (phase !== 'racing' || gameMode !== 'race') return;
+
+    const interval = setInterval(() => {
+      const playerPos = truckPosition;
+      gameClockRef.current += 0.05;
+      const now = gameClockRef.current;
+
+      // Respawn bananas after 8 seconds
+      bananaRespawnTimers.current.forEach((timer, i) => {
+        if (timer > 0 && now - timer > 8) {
+          bananaRespawnTimers.current[i] = 0;
+          setCollectedBananas(prev => {
+            const next = new Set(prev);
+            next.delete(i);
+            return next;
+          });
+        }
+      });
+
+      // Check if player drives through any banana
+      BANANA_POSITIONS.forEach((bananaPos, i) => {
+        if (collectedBananas.has(i)) return;
+
+        const dx = playerPos.x - bananaPos[0];
+        const dz = playerPos.z - bananaPos[2];
+        const dist = Math.sqrt(dx * dx + dz * dz);
+
+        if (dist < 4) {
+          // Collect this banana!
+          setCollectedBananas(prev => new Set(prev).add(i));
+          setBananaScoreCount(prev => prev + 50);
+          bananaRespawnTimers.current[i] = now;
+
+          // Find nearest AI truck ahead to throw banana at
+          let closestAI = -1;
+          let closestDist = Infinity;
+          aiPositionsRef.current.forEach((aiPos, aiIdx) => {
+            const d = playerPos.distanceTo(aiPos);
+            // Must be ahead (higher progress) or just closest
+            if (d < closestDist && d > 5) {
+              closestDist = d;
+              closestAI = aiIdx;
+            }
+          });
+
+          if (closestAI >= 0) {
+            // Throw banana at that AI truck
+            setThrownBanana({
+              from: playerPos.clone(),
+              to: aiPositionsRef.current[closestAI].clone(),
+              targetAI: closestAI,
+              startTime: now,
+            });
+
+            // The banana hits after ~0.8 seconds - make the AI spin
+            const targetAI = closestAI;
+            setTimeout(() => {
+              // Use performance.now() for cross-context timing with AITruck
+              const spinEnd = performance.now() / 1000 + 2.5;
+              setAiSpinUntil(prev => {
+                const next = [...prev];
+                next[targetAI] = spinEnd;
+                return next;
+              });
+              setThrownBanana(null);
+            }, 800);
+          }
+        }
+      });
+    }, 50);
+
+    return () => clearInterval(interval);
+  }, [phase, gameMode, truckPosition, collectedBananas]);
+
   // Game control handlers
   const handlePause = useCallback(() => {
     if (phase === 'racing') setPhase('paused');
@@ -338,8 +593,8 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     setSpeed(0);
     setCoins(0);
     setCurrentItem(null);
-    setTruckPosition(new THREE.Vector3(140, 2, 0));
-    setTruckRotation(new THREE.Euler(0, 0, 0));
+    setTruckPosition(new THREE.Vector3(GRID_POSITIONS[0][0], GRID_POSITIONS[0][1], GRID_POSITIONS[0][2]));
+    setTruckRotation(new THREE.Euler(0, RACE_START_ROTATION, 0));
     setInputState({
       forward: false,
       backward: false,
@@ -350,6 +605,11 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     });
     aiProgressRef.current = [0, 0, 0];
     playerProgressRef.current = 0;
+    setBananaScoreCount(0);
+    setAiSpinUntil([0, 0, 0]);
+    setThrownBanana(null);
+    setScorePopups([]);
+    useLearningChallengeStore.getState().startLearningChallenge();
   }, []);
 
   const handleExit = useCallback(() => {
@@ -362,18 +622,22 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     // Reset position based on mode
     if (mode === 'jump') {
       setTruckPosition(new THREE.Vector3(0, 2, -40)); // Start at bottom of jump arena
+      truckPositionRef.current.set(0, 2, -40);
       setTruckRotation(new THREE.Euler(0, 0, 0));
       setPhase('racing'); // Start immediately in jump mode
       setCountdown(null);
     } else {
-      setTruckPosition(new THREE.Vector3(140, 2, 0));
-      setTruckRotation(new THREE.Euler(0, 0, 0));
+      setTruckPosition(new THREE.Vector3(GRID_POSITIONS[0][0], GRID_POSITIONS[0][1], GRID_POSITIONS[0][2]));
+      truckPositionRef.current.set(GRID_POSITIONS[0][0], GRID_POSITIONS[0][1], GRID_POSITIONS[0][2]);
+      setTruckRotation(new THREE.Euler(0, RACE_START_ROTATION, 0));
       setPhase('countdown');
       setCountdown(3);
     }
     setSpeed(0);
     setCoins(0);
     setTrickScore(0);
+    setScorePopups([]);
+    useLearningChallengeStore.getState().startLearningChallenge();
   }, []);
 
   const activeInput = phase === 'racing' ? inputState : {
@@ -387,10 +651,40 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
 
   const isRacing = phase === 'racing';
 
-  const startPosition: [number, number, number] = gameMode === 'race' ? [140, 2, 0] : [0, 2, -40];
+  const startPosition: [number, number, number] = gameMode === 'race' ? GRID_POSITIONS[0] : [0, 2, -40];
+  const startRotation: [number, number, number] = gameMode === 'race' ? [0, RACE_START_ROTATION, 0] : [0, 0, 0];
 
   return (
     <div className="w-full h-screen relative">
+      {/* Slider thumb styling */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        .speed-slider::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          width: 24px;
+          height: 24px;
+          border-radius: 50%;
+          background: white;
+          border: 3px solid #3b82f6;
+          cursor: pointer;
+          box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        }
+        .speed-slider::-moz-range-thumb {
+          width: 24px;
+          height: 24px;
+          border-radius: 50%;
+          background: white;
+          border: 3px solid #3b82f6;
+          cursor: pointer;
+          box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        }
+        .speed-slider::-webkit-slider-runnable-track {
+          background: transparent;
+        }
+        .speed-slider::-moz-range-track {
+          background: transparent;
+        }
+      ` }} />
+
       {/* Mode Toggle - always visible at top */}
       <ModeToggle mode={gameMode} onModeChange={handleModeChange} />
 
@@ -427,6 +721,24 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
                 onCollect={handleCoinCollect}
               />
             ))}
+
+            {/* === BANANA POWER-UPS === */}
+            {/* Line of hovering bananas past the start/finish line */}
+            {BANANA_POSITIONS.map((pos, i) => (
+              !collectedBananas.has(i) && (
+                <BananaPickup key={`banana-${i}`} position={pos} />
+              )
+            ))}
+
+            {/* Thrown banana projectile flying toward AI truck */}
+            {thrownBanana && (
+              <ThrownBananaProjectile
+                from={thrownBanana.from}
+                to={thrownBanana.to}
+                startTime={thrownBanana.startTime}
+                gameClock={gameClockRef.current}
+              />
+            )}
           </>
         )}
 
@@ -435,31 +747,32 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
           <>
             <JumpArena isActive={true} truckPosition={truckPosition} />
 
-            {/* Simple ground for jump arena */}
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.1, 0]} receiveShadow>
-              <planeGeometry args={[200, 200]} />
-              <meshStandardMaterial color="#3d6b47" roughness={0.95} />
+            {/* Extended ground plane for expanded open world - desert sand */}
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.8, 0]} receiveShadow>
+              <planeGeometry args={[800, 800]} />
+              <meshStandardMaterial color="#C4956A" roughness={0.98} />
             </mesh>
           </>
         )}
 
-        {/* Player truck - MEGALODON shark theme */}
+        {/* Player truck - uses selected truck from store */}
         <MonsterTruck
           position={startPosition}
-          rotation={[0, 0, 0]}
-          color="#1E90FF"
-          truckStyle="shark"
+          rotation={startRotation}
+          color={playerTruckColor}
+          truckStyle={playerTruckStyle as 'flames' | 'shark' | 'classic' | 'dragon' | 'stars'}
           inputState={activeInput}
           onPositionUpdate={handlePositionUpdate}
           isPlayer
           gameMode={gameMode}
+          speedMultiplier={speedMultiplier}
         />
 
         {/* AI Trucks that actually race - only in race mode */}
         {gameMode === 'race' && (
           <>
             <AITruck
-              startPosition={[140, 2, 8]}
+              startPosition={GRID_POSITIONS[1]}
               color="#228B22"
               truckStyle="dragon"
               difficulty="easy"
@@ -467,9 +780,11 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
               trackWidth={trackWidth}
               isRacing={isRacing}
               onPositionUpdate={handleAIPositionUpdate(0)}
+              spinUntil={aiSpinUntil[0]}
+              speedMultiplier={speedMultiplier}
             />
             <AITruck
-              startPosition={[140, 2, -8]}
+              startPosition={GRID_POSITIONS[2]}
               color="#FF4500"
               truckStyle="bull"
               difficulty="easy"
@@ -477,9 +792,11 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
               trackWidth={trackWidth}
               isRacing={isRacing}
               onPositionUpdate={handleAIPositionUpdate(1)}
+              spinUntil={aiSpinUntil[1]}
+              speedMultiplier={speedMultiplier}
             />
             <AITruck
-              startPosition={[140, 2, 16]}
+              startPosition={GRID_POSITIONS[3]}
               color="#32CD32"
               truckStyle="flames"
               difficulty="easy"
@@ -487,17 +804,35 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
               trackWidth={trackWidth}
               isRacing={isRacing}
               onPositionUpdate={handleAIPositionUpdate(2)}
+              spinUntil={aiSpinUntil[2]}
+              speedMultiplier={speedMultiplier}
             />
           </>
+        )}
+
+        {/* Learning Coins - renders in both race and jump modes */}
+        {learningStore.isLearningActive && raceTime >= 15 && (
+          <LearningCoinManager
+            gameMode={gameMode}
+            trackLength={trackLength}
+            trackWidth={trackWidth}
+            truckPositionRef={truckPositionRef}
+            isActive={phase === 'racing'}
+            category={learningStore.category}
+            target={learningStore.currentTarget}
+            targetAnswer={learningStore.currentAnswer}
+            tier={learningStore.tier}
+            onCorrectCollect={handleLearningCorrectCollect}
+            onIncorrectCollect={handleLearningIncorrectCollect}
+          />
         )}
 
         {/* Camera */}
         <FollowCamera
           target={truckPosition}
           targetRotation={truckRotation}
-          offset={new THREE.Vector3(0, 4, -8)}
-          lookAhead={10}
-          smoothness={0.08}
+          offset={new THREE.Vector3(0, 5, -10)}
+          lookAhead={12}
         />
       </Scene3D>
 
@@ -522,7 +857,68 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
         onRestart={handleRestart}
         onExit={handleExit}
         onUseItem={handleUseItem}
+        learningActive={learningStore.isLearningActive}
+        learningBannerText={learningStore.currentTargetDisplay}
+        learningCategory={learningStore.category}
+        learningScore={learningStore.learningScore}
+        learningStreak={learningStore.streak}
+        learningTimer={learningStore.targetChangeTimer}
+        learningTimerTotal={learningStore.targetChangeDuration}
+        learningCorrectCount={learningStore.correctCount}
+        learningTargetCount={5}
+        learningScorePopups={scorePopups}
       />
+
+      {/* Banana Score Display */}
+      {gameMode === 'race' && bananaScoreCount > 0 && (
+        <div className="fixed top-20 right-4 z-40 bg-yellow-500/80 backdrop-blur-sm rounded-xl px-4 py-2 border-2 border-yellow-300">
+          <p className="text-white font-bold text-lg flex items-center gap-2">
+            <span className="text-2xl">🍌</span> {bananaScoreCount} pts
+          </p>
+        </div>
+      )}
+
+      {/* Speed Level Slider */}
+      <div className="fixed right-4 top-1/2 -translate-y-1/2 z-40 flex flex-col items-center gap-2 bg-black/60 backdrop-blur-sm rounded-2xl px-3 py-4 border border-white/20">
+        <span className="text-white font-bold text-xs tracking-wider">SPEED</span>
+        <div className="relative h-48 w-8 flex items-center justify-center">
+          <input
+            type="range"
+            min="1"
+            max="10"
+            value={speedLevel}
+            onChange={(e) => setSpeedLevel(Number(e.target.value))}
+            className="speed-slider absolute w-48 h-8 appearance-none bg-transparent cursor-pointer"
+            style={{
+              transform: 'rotate(-90deg)',
+              WebkitAppearance: 'none',
+              background: 'transparent',
+            }}
+          />
+          {/* Track background */}
+          <div className="absolute w-2 h-48 rounded-full overflow-hidden pointer-events-none">
+            <div
+              className="absolute bottom-0 w-full rounded-full transition-all duration-150"
+              style={{
+                height: `${((speedLevel - 1) / 9) * 100}%`,
+                background: speedLevel <= 3 ? '#22c55e' : speedLevel <= 6 ? '#eab308' : speedLevel <= 8 ? '#f97316' : '#ef4444',
+              }}
+            />
+            <div className="absolute inset-0 bg-white/10" />
+          </div>
+        </div>
+        <span
+          className="text-2xl font-black tabular-nums"
+          style={{
+            color: speedLevel <= 3 ? '#22c55e' : speedLevel <= 6 ? '#eab308' : speedLevel <= 8 ? '#f97316' : '#ef4444',
+          }}
+        >
+          {speedLevel}
+        </span>
+        <span className="text-white/50 text-[10px]">
+          {speedLevel <= 2 ? 'CRUISE' : speedLevel <= 4 ? 'FAST' : speedLevel <= 6 ? 'RACE' : speedLevel <= 8 ? 'TURBO' : 'MAX'}
+        </span>
+      </div>
 
       {/* Touch controls for mobile */}
       <div className="fixed bottom-4 left-4 right-4 flex justify-between pointer-events-none z-30 md:hidden">
