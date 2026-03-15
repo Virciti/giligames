@@ -87,12 +87,13 @@ export function DustTrail({ positionRef, speed, isActive, color = '#8B7355' }: D
         positions[i3 + 1] = pos.y + Math.random() * 0.5;
         positions[i3 + 2] = pos.z + (Math.random() - 0.5) * 2;
 
-        // Random velocity - mostly outward and up
-        velocities[i3] = (Math.random() - 0.5) * 3;
-        velocities[i3 + 1] = Math.random() * 2 + 1;
-        velocities[i3 + 2] = (Math.random() - 0.5) * 3;
+        // Random velocity - scales with speed for more dramatic clouds
+        const speedFactor = 0.5 + speed * 0.04; // 0.5 at crawl, ~2.3 at max speed
+        velocities[i3] = (Math.random() - 0.5) * 3 * speedFactor;
+        velocities[i3 + 1] = (Math.random() * 2 + 1) * speedFactor;
+        velocities[i3 + 2] = (Math.random() - 0.5) * 3 * speedFactor;
 
-        scales[i] = 0.3;
+        scales[i] = 0.3 * speedFactor;
 
         dummy.position.set(positions[i3], positions[i3 + 1], positions[i3 + 2]);
         dummy.scale.setScalar(scales[i]);

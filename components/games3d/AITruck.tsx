@@ -4,6 +4,7 @@ import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { RigidBody, CuboidCollider, RapierRigidBody } from '@react-three/rapier';
 import * as THREE from 'three';
+import { getRaceTrackHeight } from './Track3D';
 
 // Import the visual components from MonsterTruck
 const BODY_WIDTH = 2.4;
@@ -194,7 +195,7 @@ export function AITruck({
       spinPhaseRef.current += 8 * delta;
       currentSpeed.current *= 0.9; // Slow down quickly
 
-      chassis.setTranslation({ x: pos.x, y: WHEEL_RADIUS + 0.5, z: pos.z }, true);
+      chassis.setTranslation({ x: pos.x, y: getRaceTrackHeight(pos.x, pos.z) + WHEEL_RADIUS + 0.5, z: pos.z }, true);
       chassis.setRotation(
         new THREE.Quaternion().setFromEuler(new THREE.Euler(0, spinPhaseRef.current, 0)),
         true
@@ -249,7 +250,7 @@ export function AITruck({
     const newZ = pos.z + moveZ;
 
     // Apply position
-    chassis.setTranslation({ x: newX, y: WHEEL_RADIUS + 0.5, z: newZ }, true);
+    chassis.setTranslation({ x: newX, y: getRaceTrackHeight(newX, newZ) + WHEEL_RADIUS + 0.5, z: newZ }, true);
     chassis.setRotation(
       new THREE.Quaternion().setFromEuler(new THREE.Euler(0, currentRotation.current, 0)),
       true

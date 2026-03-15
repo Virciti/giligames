@@ -9,6 +9,7 @@ interface BoostFlameProps {
   rotation: number;
   isActive: boolean;
   intensity?: number;
+  speed?: number;
 }
 
 const PARTICLE_COUNT = 50;
@@ -18,7 +19,8 @@ export function BoostFlame({
   positionRef,
   rotation,
   isActive,
-  intensity = 1
+  intensity = 1,
+  speed: vehicleSpeed = 20
 }: BoostFlameProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const particlesRef = useRef<{
@@ -105,11 +107,12 @@ export function BoostFlame({
         positions[i3 + 1] = pos.y + 0.5 + Math.random() * 0.2;
         positions[i3 + 2] = spawnZ + (Math.random() - 0.5) * 0.3;
 
-        // Velocity - shoot backward from truck
-        const speed = 8 + Math.random() * 4;
-        velocities[i3] = -Math.sin(rotation) * speed + (Math.random() - 0.5) * 2;
-        velocities[i3 + 1] = Math.random() * 2;
-        velocities[i3 + 2] = -Math.cos(rotation) * speed + (Math.random() - 0.5) * 2;
+        // Velocity - shoot backward from truck, scaled by vehicle speed
+        const speedScale = 0.6 + Math.min(vehicleSpeed, 45) * 0.02; // 0.6 → ~1.5
+        const flameSpeed = (8 + Math.random() * 4) * speedScale;
+        velocities[i3] = -Math.sin(rotation) * flameSpeed + (Math.random() - 0.5) * 2 * speedScale;
+        velocities[i3 + 1] = Math.random() * 2 * speedScale;
+        velocities[i3 + 2] = -Math.cos(rotation) * flameSpeed + (Math.random() - 0.5) * 2 * speedScale;
 
         dummy.position.set(positions[i3], positions[i3 + 1], positions[i3 + 2]);
         dummy.scale.setScalar(0.3);

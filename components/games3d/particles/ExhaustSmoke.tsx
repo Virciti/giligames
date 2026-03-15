@@ -8,6 +8,7 @@ interface ExhaustSmokeProps {
   pipePositionRef: React.RefObject<THREE.Vector3>;
   truckRotation: number;
   throttleRef: React.RefObject<number>;
+  speed: number;
   isActive: boolean;
 }
 
@@ -18,6 +19,7 @@ export function ExhaustSmoke({
   pipePositionRef,
   truckRotation,
   throttleRef,
+  speed,
   isActive
 }: ExhaustSmokeProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
@@ -50,7 +52,8 @@ export function ExhaustSmoke({
 
     const { positions, velocities, lifetimes, scales } = particlesRef.current;
     const throttle = throttleRef.current;
-    const intensity = isActive ? 0.3 + throttle * 0.7 : 0.1;
+    const speedFactor = 0.4 + Math.min(speed, 45) * 0.02; // 0.4 idle → ~1.3 at max
+    const intensity = isActive ? (0.3 + throttle * 0.7) * speedFactor : 0.1;
     const spawnRate = intensity * 8;
     let spawned = 0;
 
@@ -95,12 +98,12 @@ export function ExhaustSmoke({
         positions[i3 + 1] = pipePos.y + 1.5 + Math.random() * 0.2;
         positions[i3 + 2] = pipePos.z + offsetZ + (Math.random() - 0.5) * 0.1;
 
-        // Velocity - upward with some randomness
-        velocities[i3] = (Math.random() - 0.5) * 0.5;
-        velocities[i3 + 1] = 1.5 + Math.random() * 1;
-        velocities[i3 + 2] = (Math.random() - 0.5) * 0.5;
+        // Velocity - upward with spread scaled by speed
+        velocities[i3] = (Math.random() - 0.5) * 0.5 * speedFactor;
+        velocities[i3 + 1] = (1.5 + Math.random() * 1) * speedFactor;
+        velocities[i3 + 2] = (Math.random() - 0.5) * 0.5 * speedFactor;
 
-        scales[i] = 0.15;
+        scales[i] = 0.15 * speedFactor;
 
         dummy.position.set(positions[i3], positions[i3 + 1], positions[i3 + 2]);
         dummy.scale.setScalar(scales[i]);
