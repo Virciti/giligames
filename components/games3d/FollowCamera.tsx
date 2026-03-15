@@ -7,8 +7,10 @@ import * as THREE from 'three';
 const DEFAULT_OFFSET = new THREE.Vector3(0, 5, -10);
 
 interface FollowCameraProps {
-  target: THREE.Vector3;
-  targetRotation: THREE.Euler;
+  /** Ref to the truck's live position — read directly each frame, no React re-renders */
+  targetRef: React.RefObject<THREE.Vector3>;
+  /** Ref to the truck's live rotation */
+  targetRotationRef: React.RefObject<THREE.Euler>;
   offset?: THREE.Vector3;
   lookAhead?: number;
   smoothness?: number;
@@ -19,13 +21,13 @@ interface FollowCameraProps {
 }
 
 export function FollowCamera({
-  target,
-  targetRotation,
+  targetRef,
+  targetRotationRef,
   offset = DEFAULT_OFFSET,
   lookAhead = 12,
   smoothness = 0.08,
   shakeTrigger = 0,
-  shakeIntensity = 0.4,
+  shakeIntensity = 0.2,
 }: FollowCameraProps) {
   const { camera } = useThree();
   const currentPosition = useRef(new THREE.Vector3());
@@ -40,9 +42,10 @@ export function FollowCamera({
   const lastShakeTrigger = useRef(0);
 
   useFrame((_, delta) => {
+    const target = targetRef.current;
     if (!target) return;
 
-    const rotationY = targetRotation?.y || 0;
+    const rotationY = targetRotationRef.current?.y || 0;
 
     // Calculate camera position: behind and above the vehicle
     // Rotate the offset by the vehicle's rotation
@@ -76,9 +79,10 @@ export function FollowCamera({
     }
 
     // Frame-rate independent smooth follow using delta time
-    // At 60fps this gives ~0.55 blend per frame — tight racing-game tracking
-    const posSmooth = 1 - Math.pow(0.001, delta);
-    const lookSmooth = 1 - Math.pow(0.0005, delta);
+    // Gentler smoothing prevents camera jitter from amplifying position noise
+    // At 60fps: posSmooth ≈ 0.08, lookSmooth ≈ 0.06 — smooth cinematic follow
+    const posSmooth = 1 - Math.pow(0.08, delta);
+    const lookSmooth = 1 - Math.pow(0.04, delta);
 
     currentPosition.current.lerp(idealPosition, posSmooth);
     currentLookAt.current.lerp(idealLookAt, lookSmooth);

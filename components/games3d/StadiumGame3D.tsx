@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import * as THREE from 'three';
 import { RigidBody, CuboidCollider } from '@react-three/rapier';
 import { Scene3D } from './Scene3D';
@@ -242,8 +242,8 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
   const [starsCollected, setStarsCollected] = useState(0);
   const [collectedStars, setCollectedStars] = useState<Set<number>>(new Set());
 
-  const [truckPosition, setTruckPosition] = useState(new THREE.Vector3(0, 2, 0));
-  const [truckRotation, setTruckRotation] = useState(new THREE.Euler(0, 0, 0));
+  const truckPositionRef = useRef(new THREE.Vector3(0, 2, 0));
+  const truckRotationRef = useRef(new THREE.Euler(0, 0, 0));
 
   const [inputState, setInputState] = useState({
     forward: false,
@@ -338,8 +338,8 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
   }, [isPaused]);
 
   const handlePositionUpdate = useCallback((pos: THREE.Vector3, rot: THREE.Euler) => {
-    setTruckPosition(pos);
-    setTruckRotation(rot);
+    truckPositionRef.current.copy(pos);
+    truckRotationRef.current.copy(rot);
 
     // Check star collection
     starPositions.forEach((starPos, index) => {
@@ -360,8 +360,8 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
     setStarsCollected(0);
     setCollectedStars(new Set());
     setIsPaused(false);
-    setTruckPosition(new THREE.Vector3(0, 2, 0));
-    setTruckRotation(new THREE.Euler(0, 0, 0));
+    truckPositionRef.current.set(0, 2, 0);
+    truckRotationRef.current.set(0, 0, 0);
   };
 
   return (
@@ -400,8 +400,8 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
 
         {/* Classic racing game third-person camera */}
         <FollowCamera
-          target={truckPosition}
-          targetRotation={truckRotation}
+          targetRef={truckPositionRef}
+          targetRotationRef={truckRotationRef}
           offset={new THREE.Vector3(0, 5, -12)}
           lookAhead={15}
           smoothness={0.12}

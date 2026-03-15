@@ -234,7 +234,6 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
   const [raceTime, setRaceTime] = useState(0);
   const [lap, setLap] = useState(1);
   const [position, setPosition] = useState(1);
-  const [speed, setSpeed] = useState(0);
   const [coins, setCoins] = useState(0);
   const [currentItem, setCurrentItem] = useState<PowerUpType | null>(null);
   const [trickScore, setTrickScore] = useState(0);
@@ -309,10 +308,15 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
   const [bumpNotification, setBumpNotification] = useState<string | null>(null);
   const collisionCooldownRef = useRef(0);
 
-  // Vehicle state
-  const [truckPosition, setTruckPosition] = useState(new THREE.Vector3(GRID_POSITIONS[0][0], GRID_POSITIONS[0][1], GRID_POSITIONS[0][2]));
-  const [truckRotation, setTruckRotation] = useState(new THREE.Euler(0, RACE_START_ROTATION, 0));
+  // Vehicle state — refs are the source of truth (updated every frame, no re-renders)
+  // Throttled state copies are used only for HUD display (updated every 100ms)
   const truckPositionRef = useRef(new THREE.Vector3(GRID_POSITIONS[0][0], GRID_POSITIONS[0][1], GRID_POSITIONS[0][2]));
+  const truckRotationRef = useRef(new THREE.Euler(0, RACE_START_ROTATION, 0));
+  const speedRef = useRef(0);
+  // Throttled HUD state — updated every 100ms, NOT every frame
+  const [hudPosition, setHudPosition] = useState({ x: GRID_POSITIONS[0][0], z: GRID_POSITIONS[0][2] });
+  const [hudRotationY, setHudRotationY] = useState(RACE_START_ROTATION);
+  const [hudSpeed, setHudSpeed] = useState(0);
 
   // Learning challenge state
   const learningStore = useLearningChallengeStore();
@@ -523,12 +527,26 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     return () => clearInterval(timer);
   }, [phase]);
 
-  // Handle position update from truck
+  // Throttled HUD state sync — reads refs every 100ms instead of setState per frame
+  useEffect(() => {
+    if (phase !== 'racing' && phase !== 'countdown') return;
+
+    const hudSync = setInterval(() => {
+      const p = truckPositionRef.current;
+      setHudPosition({ x: p.x, z: p.z });
+      setHudRotationY(truckRotationRef.current.y);
+      setHudSpeed(speedRef.current);
+    }, 100);
+
+    return () => clearInterval(hudSync);
+  }, [phase]);
+
+  // Handle position update from truck — writes to REFS only (no re-renders)
+  // Lap detection fires state updates only on actual lap crossings (rare events)
   const handlePositionUpdate = useCallback((pos: THREE.Vector3, rot: THREE.Euler, spd: number) => {
-    setTruckPosition(pos);
     truckPositionRef.current.copy(pos);
-    setTruckRotation(rot);
-    setSpeed(spd * 1.5);
+    truckRotationRef.current.copy(rot);
+    speedRef.current = spd * 1.5;
 
     // Update player progress and detect lap crossing
     const newProgress = calculateProgress(pos);
@@ -566,7 +584,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
 
     prevPlayerProgressRef.current = newProgress;
     playerProgressRef.current = newProgress;
-  }, [calculateProgress, phase, totalLaps]);
+  }, [calculateProgress, phase, totalLaps, raceTime]);
 
   // Handle AI position updates - also track positions for banana targeting
   const handleAIPositionUpdate = useCallback((index: number) => (pos: THREE.Vector3, progress: number) => {
@@ -635,7 +653,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     if (phase !== 'racing' || gameMode !== 'race') return;
 
     const interval = setInterval(() => {
-      const playerPos = truckPosition;
+      const playerPos = truckPositionRef.current;
       gameClockRef.current += 0.05;
       const now = gameClockRef.current;
 
@@ -772,7 +790,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     }, 50);
 
     return () => clearInterval(interval);
-  }, [phase, gameMode, truckPosition, collectedBananas]);
+  }, [phase, gameMode, collectedBananas]);
 
   // Game control handlers
   const handlePause = useCallback(() => {
@@ -789,11 +807,14 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     setRaceTime(0);
     setLap(1);
     setPosition(1);
-    setSpeed(0);
+    setHudSpeed(0);
+    speedRef.current = 0;
     setCoins(0);
     setCurrentItem(null);
-    setTruckPosition(new THREE.Vector3(GRID_POSITIONS[0][0], GRID_POSITIONS[0][1], GRID_POSITIONS[0][2]));
-    setTruckRotation(new THREE.Euler(0, RACE_START_ROTATION, 0));
+    truckPositionRef.current.set(GRID_POSITIONS[0][0], GRID_POSITIONS[0][1], GRID_POSITIONS[0][2]);
+    truckRotationRef.current.set(0, RACE_START_ROTATION, 0);
+    setHudPosition({ x: GRID_POSITIONS[0][0], z: GRID_POSITIONS[0][2] });
+    setHudRotationY(RACE_START_ROTATION);
     setInputState({
       forward: false,
       backward: false,
@@ -838,19 +859,22 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     setGameMode(mode);
     // Reset position based on mode
     if (mode === 'jump') {
-      setTruckPosition(new THREE.Vector3(0, 2, -40)); // Start at bottom of jump arena
       truckPositionRef.current.set(0, 2, -40);
-      setTruckRotation(new THREE.Euler(0, 0, 0));
+      truckRotationRef.current.set(0, 0, 0);
+      setHudPosition({ x: 0, z: -40 });
+      setHudRotationY(0);
       setPhase('racing'); // Start immediately in jump mode
       setCountdown(null);
     } else {
-      setTruckPosition(new THREE.Vector3(GRID_POSITIONS[0][0], GRID_POSITIONS[0][1], GRID_POSITIONS[0][2]));
       truckPositionRef.current.set(GRID_POSITIONS[0][0], GRID_POSITIONS[0][1], GRID_POSITIONS[0][2]);
-      setTruckRotation(new THREE.Euler(0, RACE_START_ROTATION, 0));
+      truckRotationRef.current.set(0, RACE_START_ROTATION, 0);
+      setHudPosition({ x: GRID_POSITIONS[0][0], z: GRID_POSITIONS[0][2] });
+      setHudRotationY(RACE_START_ROTATION);
       setPhase('countdown');
       setCountdown(3);
     }
-    setSpeed(0);
+    setHudSpeed(0);
+    speedRef.current = 0;
     setCoins(0);
     setTrickScore(0);
     setScorePopups([]);
@@ -967,7 +991,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
         {/* JUMP MODE: Arena with ramps and cars */}
         {gameMode === 'jump' && (
           <>
-            <JumpArena isActive={true} truckPosition={truckPosition} />
+            <JumpArena isActive={true} truckPosition={truckPositionRef.current} />
 
             {/* Extended ground plane for expanded open world - desert sand */}
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.8, 0]} receiveShadow>
@@ -1052,8 +1076,8 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
 
         {/* Camera */}
         <FollowCamera
-          target={truckPosition}
-          targetRotation={truckRotation}
+          targetRef={truckPositionRef}
+          targetRotationRef={truckRotationRef}
           lookAhead={12}
           shakeTrigger={sfxCollision + sfxSlip}
         />
@@ -1061,7 +1085,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
 
       {/* Procedural racing sound effects */}
       <RaceSFX
-        speed={speed}
+        speed={hudSpeed}
         isRacing={phase === 'racing'}
         isBoosting={inputState.boost}
         collisionTrigger={sfxCollision}
@@ -1073,7 +1097,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
 
       {/* Mario Kart style HUD */}
       <RaceHUD3D
-        speed={speed}
+        speed={hudSpeed}
         maxSpeed={maxSpeed}
         position={position}
         totalRacers={totalRacers}
@@ -1089,9 +1113,9 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
         countdown={countdown}
         coins={coins}
         currentItem={currentItem}
-        playerX={truckPosition.x}
-        playerZ={truckPosition.z}
-        playerRotation={truckRotation.y}
+        playerX={hudPosition.x}
+        playerZ={hudPosition.z}
+        playerRotation={hudRotationY}
         aiPositions={aiPositionsRef.current.map((p, i) => ({
           x: p.x,
           z: p.z,
