@@ -244,6 +244,7 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
 
   const truckPositionRef = useRef(new THREE.Vector3(0, 2, 0));
   const truckRotationRef = useRef(new THREE.Euler(0, 0, 0));
+  const speedRef = useRef(0);
 
   const [inputState, setInputState] = useState({
     forward: false,
@@ -337,9 +338,10 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
     };
   }, [isPaused]);
 
-  const handlePositionUpdate = useCallback((pos: THREE.Vector3, rot: THREE.Euler) => {
+  const handlePositionUpdate = useCallback((pos: THREE.Vector3, rot: THREE.Euler, spd: number) => {
     truckPositionRef.current.copy(pos);
     truckRotationRef.current.copy(rot);
+    speedRef.current = spd;
 
     // Check star collection
     starPositions.forEach((starPos, index) => {
@@ -362,6 +364,7 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
     setIsPaused(false);
     truckPositionRef.current.set(0, 2, 0);
     truckRotationRef.current.set(0, 0, 0);
+    speedRef.current = 0;
   };
 
   return (
@@ -402,6 +405,7 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
         <FollowCamera
           targetRef={truckPositionRef}
           targetRotationRef={truckRotationRef}
+          speedRef={speedRef}
           offset={new THREE.Vector3(0, 5, -12)}
           lookAhead={15}
           smoothness={0.12}

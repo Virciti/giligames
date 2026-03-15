@@ -1078,6 +1078,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
         <FollowCamera
           targetRef={truckPositionRef}
           targetRotationRef={truckRotationRef}
+          speedRef={speedRef}
           lookAhead={12}
           shakeTrigger={sfxCollision + sfxSlip}
         />

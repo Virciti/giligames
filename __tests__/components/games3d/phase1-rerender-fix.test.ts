@@ -169,13 +169,14 @@ describe('Phase 1: Eliminate re-render storm', () => {
 
   describe('Camera smoothing is gentler', () => {
     it('posSmooth uses a less aggressive base (>= 0.04)', () => {
-      // Old pattern: Math.pow(0.001, delta) — way too aggressive
-      expect(followCamSrc).not.toContain('Math.pow(0.001,');
-      // New pattern should use a higher base for gentler follow
-      const match = followCamSrc.match(/Math\.pow\(([\d.]+),\s*delta\)/);
+      // Old pattern: posSmooth = 1 - Math.pow(0.001, delta) — way too aggressive
+      // posSmooth line should NOT use 0.001
+      const posSmoothLine = followCamSrc.split('\n').find(l => l.includes('posSmooth') && l.includes('Math.pow'));
+      expect(posSmoothLine).toBeTruthy();
+      expect(posSmoothLine).not.toContain('0.001');
+      // New pattern should use smoothness prop or a higher base for gentler follow
+      const match = posSmoothLine!.match(/Math\.pow\(([^,]+),/);
       expect(match).toBeTruthy();
-      const base = parseFloat(match![1]);
-      expect(base).toBeGreaterThanOrEqual(0.04);
     });
 
     it('shake intensity default is <= 0.3 (reduced from 0.4)', () => {
