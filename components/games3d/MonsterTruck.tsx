@@ -8,9 +8,9 @@ import {
   RapierRigidBody,
 } from '@react-three/rapier';
 import * as THREE from 'three';
-import { DustTrail, ExhaustSmoke, BoostFlame } from './particles';
-import { getTerrainHeight, isOnBridge, isInTunnel, isInMudPit } from './JumpArena';
-import { getRaceTrackHeight } from './Track3D';
+import { DustTrail, ExhaustSmoke, BoostFlame, DriftSparks } from './particles';
+import { getTerrainHeight, isOnBridge, isInTunnel, isInMudPit, getJumpSurfaceType } from './JumpArena';
+import { getRaceTrackHeight, getRaceSurfaceType } from './Track3D';
 
 // Cybertruck dimensions - bigger tires, longer body
 const BODY_WIDTH = 2.6;
@@ -32,12 +32,32 @@ const GRAVITY = 25; // Arcade gravity — aligned closer to Scene3D Physics (20)
 const JUMP_MODE_SPEED = 32; // Fast in jump mode too
 const AUTO_STRAIGHTEN = 0.25; // Helps truck go straight when not steering
 
+// WEIGHT & INERTIA — momentum-based vehicle feel
+const STEERING_INERTIA = 6.0; // How quickly yaw velocity responds to input (higher = snappier)
+const LATERAL_GRIP = 0.85; // Lateral tire grip (0 = ice, 1 = perfect grip) — controls slide amount
+const LATERAL_DECAY = 0.92; // How fast lateral velocity bleeds per frame (frame-rate normalized)
+const SUSPENSION_STIFFNESS = 35; // Spring constant for suspension bounce (units/s²)
+const SUSPENSION_DAMPING = 8; // Damping factor for suspension oscillation
+const LANDING_BOUNCE_FACTOR = 0.3; // How much downward velocity converts to bounce (0 = no bounce, 1 = full)
+const BODY_LEAN_FACTOR = 0.06; // How much the body leans into turns (radians per unit of lateral force)
+const BODY_PITCH_FACTOR = 0.02; // Forward/back pitch under acceleration/braking
+
+// DRIFT / POWER-SLIDE SYSTEM — Mario Kart inspired
+const DRIFT_MIN_SPEED = 15; // Minimum speed to initiate a drift
+const DRIFT_CHARGE_RATE = 1.0; // Seconds per drift level (1→2→3)
+const DRIFT_MINI_TURBO_SPEEDS = [8, 14, 22]; // Speed boost per level (blue/orange/purple)
+const DRIFT_MINI_TURBO_DURATION = [0.6, 1.0, 1.6]; // Boost duration per level
+const DRIFT_LATERAL_GRIP = 0.6; // Reduced grip while drifting (0 = ice, 1 = full grip)
+const DRIFT_TURN_BOOST = 1.6; // Steering multiplier while drifting (tighter turns)
+const DRIFT_COUNTER_STEER_BONUS = 1.5; // Charge rate bonus for counter-steering
+
 interface MonsterTruckProps {
   position?: [number, number, number];
   rotation?: [number, number, number];
   color?: string;
   truckStyle?: 'flames' | 'shark' | 'classic' | 'dragon' | 'stars';
   onPositionUpdate?: (position: THREE.Vector3, rotation: THREE.Euler, speed: number) => void;
+  onDriftUpdate?: (isDrifting: boolean, driftLevel: number) => void;
   inputState?: {
     forward: boolean;
     backward: boolean;
@@ -45,6 +65,7 @@ interface MonsterTruckProps {
     right: boolean;
     brake: boolean;
     boost: boolean;
+    drift: boolean;
   };
   isPlayer?: boolean;
   gameMode?: 'race' | 'jump';
@@ -711,6 +732,7 @@ export function MonsterTruck({
   color = '#FF6B6B',
   truckStyle = 'classic',
   onPositionUpdate,
+  onDriftUpdate,
   inputState,
   isPlayer = false,
   gameMode = 'race',
@@ -728,6 +750,34 @@ export function MonsterTruck({
   const currentY = useRef(position[1]);
   const isAirborne = useRef(false);
   const smoothGroundHeight = useRef(position[1]); // Smoothed terrain height to prevent jitter
+
+  // DRIFT STATE — power-slide state machine
+  // States: 'none' → 'drifting' → 'mini-turbo' (on release)
+  const driftState = useRef<'none' | 'drifting' | 'mini-turbo'>('none');
+  const driftDirection = useRef(0); // -1 = left, +1 = right (locked at drift start)
+  const driftCharge = useRef(0); // 0 → 3 seconds of drift time
+  const driftLevel = useRef(0); // 0 = none, 1 = blue, 2 = orange, 3 = purple
+  const miniTurboTimer = useRef(0); // Remaining mini-turbo boost time
+  const miniTurboSpeed = useRef(0); // Speed bonus from mini-turbo
+
+  // WEIGHT & INERTIA STATE — momentum-based physics
+  const yawVelocity = useRef(0); // Current rotational velocity (rad/s) — smoothed steering
+  const lateralVelocity = useRef(0); // Sideways slide velocity (positive = sliding right)
+  const suspensionOffset = useRef(0); // Current suspension compression (-1 to 1)
+  const suspensionVelocity = useRef(0); // Suspension spring velocity
+  const wasAirborne = useRef(false); // Track landing for bounce trigger
+  const bodyLean = useRef(0); // Current body roll angle (smoothed)
+  const bodyPitch = useRef(0); // Current body pitch angle (smoothed)
+
+  // Surface-dependent friction state
+  const surfaceDustColor = useRef('#C4A070'); // Current dust color from surface type
+  const surfaceSpeedFriction = useRef(1.0); // Current speed friction from surface
+  const surfaceLateralGrip = useRef(1.0); // Current lateral grip from surface
+
+  // Boost pad activation — timed speed burst when driving over boost pads
+  const boostPadTimer = useRef(0); // Remaining boost pad effect time
+  const BOOST_PAD_SPEED_MULT = 1.5; // 1.5x speed on boost pad
+  const BOOST_PAD_DURATION = 1.5; // Seconds of boost effect
 
   // Track position for particle effects (refs to avoid re-renders in useFrame)
   const truckPosRef = useRef(new THREE.Vector3(position[0], position[1], position[2]));
@@ -758,6 +808,7 @@ export function MonsterTruck({
     right: false,
     brake: false,
     boost: false,
+    drift: false,
   };
 
   useFrame((state, delta) => {
@@ -794,8 +845,8 @@ export function MonsterTruck({
       if (Math.abs(currentSpeed.current) < 0.1) currentSpeed.current = 0;
     }
 
-    // Steering - kid-friendly with auto-straightening assist
-    // Skip normal steering while spinning from a banana hit
+    // Steering — momentum-based with inertia (weight & feel)
+    // Instead of instant direction changes, yaw velocity builds up and decays
     const speedFactor = Math.abs(currentSpeed.current) / MAX_SPEED;
     const turnMultiplier = 1 - (speedFactor * TURN_SPEED_REDUCTION);
     const effectiveTurnSpeed = TURN_SPEED * turnMultiplier;
@@ -803,25 +854,129 @@ export function MonsterTruck({
     const isSteering = input.left || input.right;
 
     if (!isSpinning && Math.abs(currentSpeed.current) > 0.5) {
-      if (input.left) {
-        currentRotation.current += effectiveTurnSpeed * delta * Math.sign(currentSpeed.current);
-      }
-      if (input.right) {
-        currentRotation.current -= effectiveTurnSpeed * delta * Math.sign(currentSpeed.current);
-      }
+      // Compute target yaw velocity from input
+      let targetYawVelocity = 0;
+      if (input.left) targetYawVelocity += effectiveTurnSpeed * Math.sign(currentSpeed.current);
+      if (input.right) targetYawVelocity -= effectiveTurnSpeed * Math.sign(currentSpeed.current);
+
+      // Smooth yaw velocity toward target (steering inertia)
+      // Higher STEERING_INERTIA = faster response, lower = more sluggish/weighty
+      const inertiaFactor = 1 - Math.pow(0.01, STEERING_INERTIA * delta);
+      yawVelocity.current += (targetYawVelocity - yawVelocity.current) * inertiaFactor;
 
       // AUTO-STRAIGHTENING for kids when not actively steering
-      // Helps the truck naturally go straighter, reducing frustration
       if (!isSteering && gameMode === 'race') {
-        // Gently guide toward the track direction
-        // This mimics "training wheels" - the truck wants to go straight
         steerAngle.current *= (1 - AUTO_STRAIGHTEN * delta * 2);
+        // Also decay yaw velocity when not steering (self-centering)
+        yawVelocity.current *= Math.pow(0.05, delta);
       }
+    } else if (!isSpinning) {
+      // At very low speed, rapidly decay yaw velocity
+      yawVelocity.current *= Math.pow(0.01, delta);
     }
+
+    // Apply yaw velocity to rotation
+    currentRotation.current += yawVelocity.current * delta;
+
+    // ── LATERAL GRIP MODEL ──
+    // When turning at speed, the truck builds lateral (sideways) velocity
+    // This creates a natural slide feel — the faster you turn, the more you slide
+    const lateralForce = yawVelocity.current * Math.abs(currentSpeed.current) * (1 - LATERAL_GRIP);
+    lateralVelocity.current += lateralForce * delta;
+    // Tire grip pulls lateral velocity back toward zero
+    lateralVelocity.current *= Math.pow(LATERAL_DECAY, delta * 60);
+    // Clamp to prevent extreme slides
+    lateralVelocity.current = Math.max(-15, Math.min(15, lateralVelocity.current));
 
     // Visual steering angle
     const targetSteer = (input.left ? 0.4 : 0) - (input.right ? 0.4 : 0);
     steerAngle.current = THREE.MathUtils.lerp(steerAngle.current, targetSteer, 5 * delta);
+
+    // ── BODY LEAN & PITCH ──
+    // Lean into turns (roll) and pitch under acceleration/braking
+    const targetLean = -yawVelocity.current * speedFactor * BODY_LEAN_FACTOR * 15;
+    bodyLean.current = THREE.MathUtils.lerp(bodyLean.current, targetLean, Math.min(1, 8 * delta));
+
+    const accelInput = input.forward ? 1 : (input.brake ? -1 : (input.backward ? -0.5 : 0));
+    const targetPitch = -accelInput * BODY_PITCH_FACTOR * 8;
+    bodyPitch.current = THREE.MathUtils.lerp(bodyPitch.current, targetPitch, Math.min(1, 6 * delta));
+
+    // ── DRIFT / POWER-SLIDE STATE MACHINE ──
+    // Trigger: hold drift button + steering at speed > DRIFT_MIN_SPEED
+    // Charge: holding drift builds charge through 3 levels (blue → orange → purple)
+    // Release: releasing drift grants a mini-turbo speed burst proportional to charge
+    const canDrift = Math.abs(currentSpeed.current) > DRIFT_MIN_SPEED && !isSpinning && !isAirborne.current;
+    const wantsDrift = input.drift && isSteering && canDrift;
+
+    if (driftState.current === 'none') {
+      if (wantsDrift) {
+        // Initiate drift — lock direction at the moment drift starts
+        driftState.current = 'drifting';
+        driftDirection.current = input.left ? -1 : 1;
+        driftCharge.current = 0;
+        driftLevel.current = 1; // Start at blue
+      }
+    } else if (driftState.current === 'drifting') {
+      if (!input.drift || Math.abs(currentSpeed.current) < DRIFT_MIN_SPEED * 0.5 || isSpinning) {
+        // Release drift → trigger mini-turbo if charged
+        const level = driftLevel.current;
+        if (level > 0) {
+          driftState.current = 'mini-turbo';
+          miniTurboTimer.current = DRIFT_MINI_TURBO_DURATION[level - 1];
+          miniTurboSpeed.current = DRIFT_MINI_TURBO_SPEEDS[level - 1];
+        } else {
+          driftState.current = 'none';
+        }
+        driftCharge.current = 0;
+        driftLevel.current = 0;
+        onDriftUpdate?.(false, 0);
+      } else {
+        // Continue drifting — accumulate charge
+        // Counter-steering (steering opposite to drift direction) charges faster
+        const isCounterSteering =
+          (driftDirection.current < 0 && input.right) ||
+          (driftDirection.current > 0 && input.left);
+        const chargeMultiplier = isCounterSteering ? DRIFT_COUNTER_STEER_BONUS : 1.0;
+        driftCharge.current += delta * chargeMultiplier;
+
+        // Level up based on accumulated charge time
+        const prevLevel = driftLevel.current;
+        if (driftCharge.current >= DRIFT_CHARGE_RATE * 2) {
+          driftLevel.current = 3; // Purple
+        } else if (driftCharge.current >= DRIFT_CHARGE_RATE) {
+          driftLevel.current = 2; // Orange
+        } else {
+          driftLevel.current = 1; // Blue
+        }
+
+        // Apply drift physics: enhanced turning + reduced grip
+        const driftTurnBoost = DRIFT_TURN_BOOST;
+        const driftTurnAmount = effectiveTurnSpeed * driftTurnBoost * delta * Math.sign(currentSpeed.current);
+        // Drift auto-steers in the locked direction, with extra turn from input
+        currentRotation.current += driftDirection.current * driftTurnAmount * 0.4;
+
+        // Notify parent of drift level changes
+        if (driftLevel.current !== prevLevel || prevLevel === 0) {
+          onDriftUpdate?.(true, driftLevel.current);
+        }
+      }
+    }
+
+    // Mini-turbo boost application (after drift release)
+    if (driftState.current === 'mini-turbo') {
+      miniTurboTimer.current -= delta;
+      if (miniTurboTimer.current <= 0) {
+        driftState.current = 'none';
+        miniTurboSpeed.current = 0;
+      } else {
+        // Apply mini-turbo: add speed bonus on top of normal max
+        const turboBoost = miniTurboSpeed.current * (miniTurboTimer.current > 0.3 ? 1 : miniTurboTimer.current / 0.3);
+        currentSpeed.current = Math.min(
+          effectiveMaxSpeed + miniTurboSpeed.current,
+          currentSpeed.current + turboBoost * delta * 20
+        );
+      }
+    }
 
     // Wheel spin based on speed (radians per second)
     const wheelCircumference = 2 * Math.PI * WHEEL_RADIUS;
@@ -831,12 +986,17 @@ export function MonsterTruck({
     // Track throttle for exhaust particles
     throttleRef.current = input.forward ? (input.boost ? 1 : 0.6) : 0;
 
-    // Movement
+    // Movement — forward velocity + lateral slide from inertia
+    const isDrifting = driftState.current === 'drifting';
+    // Forward movement along truck heading
     const moveX = Math.sin(currentRotation.current) * currentSpeed.current * delta;
     const moveZ = Math.cos(currentRotation.current) * currentSpeed.current * delta;
+    // Lateral slide perpendicular to heading (from grip model)
+    const lateralX = Math.cos(currentRotation.current) * lateralVelocity.current * delta;
+    const lateralZ = -Math.sin(currentRotation.current) * lateralVelocity.current * delta;
 
-    const newX = pos.x + moveX;
-    const newZ = pos.z + moveZ;
+    const newX = pos.x + moveX + lateralX;
+    const newZ = pos.z + moveZ + lateralZ;
 
     let finalX = newX;
     let finalZ = newZ;
@@ -905,10 +1065,47 @@ export function MonsterTruck({
         currentSpeed.current *= Math.pow(0.3, delta * 60);
       }
 
-      // Mud pit slow-down effect
-      if (isInMudPit(finalX, finalZ)) {
-        currentSpeed.current *= Math.pow(0.96, delta * 60); // Drag in mud (frame-rate independent)
+      // Surface-dependent friction (jump mode) — replaces old hardcoded mud pit check
+      const jumpSurface = getJumpSurfaceType(finalX, finalZ);
+      surfaceSpeedFriction.current = jumpSurface.speedFriction;
+      surfaceLateralGrip.current = jumpSurface.lateralGrip;
+      surfaceDustColor.current = jumpSurface.dustColor;
+      if (jumpSurface.speedFriction < 1.0) {
+        currentSpeed.current *= Math.pow(jumpSurface.speedFriction, delta * 60);
       }
+      // Surface lateral grip reduces slide control
+      lateralVelocity.current *= Math.pow(jumpSurface.lateralGrip, delta * 60);
+    }
+
+    // Surface-dependent friction (race mode)
+    if (gameMode === 'race') {
+      const raceSurface = getRaceSurfaceType(finalX, finalZ);
+      surfaceSpeedFriction.current = raceSurface.speedFriction;
+      surfaceLateralGrip.current = raceSurface.lateralGrip;
+      surfaceDustColor.current = raceSurface.dustColor;
+      if (raceSurface.speedFriction < 1.0) {
+        currentSpeed.current *= Math.pow(raceSurface.speedFriction, delta * 60);
+      }
+      // Lateral grip modifier from surface
+      lateralVelocity.current *= Math.pow(raceSurface.lateralGrip, delta * 60);
+
+      // Boost pad activation — trigger timed speed burst
+      if (raceSurface.type === 'boost-pad' && boostPadTimer.current <= 0) {
+        boostPadTimer.current = BOOST_PAD_DURATION;
+      }
+
+      // Oil slick — add lateral slide impulse for kid-friendly spin feel
+      if (raceSurface.type === 'oil-slick') {
+        lateralVelocity.current += (Math.random() - 0.5) * 2 * delta;
+      }
+    }
+
+    // Boost pad speed application (works across both modes, timer counts down)
+    if (boostPadTimer.current > 0) {
+      boostPadTimer.current -= delta;
+      const boostFade = boostPadTimer.current > 0.3 ? 1 : boostPadTimer.current / 0.3;
+      const boostSpeed = effectiveMaxSpeed * BOOST_PAD_SPEED_MULT;
+      currentSpeed.current = Math.min(boostSpeed, currentSpeed.current + boostSpeed * boostFade * delta * 8);
     }
 
     // Keep within overall arena bounds (both modes) — smooth radial push-back
@@ -990,6 +1187,9 @@ export function MonsterTruck({
         currentY.current += verticalVelocity.current * delta;
 
         if (currentY.current < smoothGround) {
+          // Landing! Trigger suspension bounce
+          const impactVelocity = Math.abs(verticalVelocity.current);
+          suspensionVelocity.current = -impactVelocity * LANDING_BOUNCE_FACTOR;
           currentY.current = smoothGround;
           verticalVelocity.current = 0;
           isAirborne.current = false;
@@ -1024,6 +1224,9 @@ export function MonsterTruck({
         verticalVelocity.current -= GRAVITY * delta;
         currentY.current += verticalVelocity.current * delta;
         if (currentY.current <= smoothGround) {
+          // Landing! Trigger suspension bounce
+          const impactVelocity = Math.abs(verticalVelocity.current);
+          suspensionVelocity.current = -impactVelocity * LANDING_BOUNCE_FACTOR;
           currentY.current = smoothGround;
           verticalVelocity.current = 0;
           isAirborne.current = false;
@@ -1035,11 +1238,32 @@ export function MonsterTruck({
       }
     }
 
-    // Apply position
-    const finalY = currentY.current;
+    // ── SUSPENSION SPRING SIMULATION ──
+    // Simple spring-damper: compresses on landing, oscillates, then settles
+    // suspensionOffset represents visual displacement only (doesn't affect physics position)
+    const springForce = -SUSPENSION_STIFFNESS * suspensionOffset.current;
+    const dampingForce = -SUSPENSION_DAMPING * suspensionVelocity.current;
+    suspensionVelocity.current += (springForce + dampingForce) * delta;
+    suspensionOffset.current += suspensionVelocity.current * delta;
+    // Clamp to reasonable range
+    suspensionOffset.current = Math.max(-0.6, Math.min(0.6, suspensionOffset.current));
+    // Kill tiny oscillations
+    if (Math.abs(suspensionOffset.current) < 0.005 && Math.abs(suspensionVelocity.current) < 0.01) {
+      suspensionOffset.current = 0;
+      suspensionVelocity.current = 0;
+    }
+
+    // Track airborne state for next frame landing detection
+    wasAirborne.current = isAirborne.current;
+
+    // Apply position — add suspension offset for visual bounce
+    const finalY = currentY.current + suspensionOffset.current;
     chassis.setTranslation({ x: finalX, y: finalY, z: finalZ }, true);
+    // Apply rotation with body lean (roll) and pitch for weight feel
     chassis.setRotation(
-      _tmpQuat.current.setFromEuler(_tmpEuler.current.set(0, currentRotation.current, 0)),
+      _tmpQuat.current.setFromEuler(
+        _tmpEuler.current.set(bodyPitch.current, currentRotation.current, bodyLean.current)
+      ),
       true
     );
 
@@ -1097,12 +1321,12 @@ export function MonsterTruck({
       {/* Particle Effects - only for player truck */}
       {isPlayer && (
         <>
-          {/* Dust trail from rear wheels */}
+          {/* Dust trail from rear wheels — color changes per surface */}
           <DustTrail
             positionRef={truckPosRef}
             speed={currentSpeed.current}
             isActive={Math.abs(currentSpeed.current) > 2}
-            color="#C4A070"
+            color={surfaceDustColor.current}
           />
 
           {/* Electric energy sparks from wheel arches */}
@@ -1118,8 +1342,17 @@ export function MonsterTruck({
           <BoostFlame
             positionRef={truckPosRef}
             rotation={currentRotation.current}
-            isActive={input.boost}
-            intensity={1.5}
+            isActive={input.boost || driftState.current === 'mini-turbo'}
+            intensity={driftState.current === 'mini-turbo' ? 2.0 : 1.5}
+            speed={Math.abs(currentSpeed.current)}
+          />
+
+          {/* Drift sparks from rear wheels during power-slide */}
+          <DriftSparks
+            positionRef={truckPosRef}
+            rotation={currentRotation.current}
+            driftLevel={driftLevel.current}
+            isActive={driftState.current === 'drifting'}
             speed={Math.abs(currentSpeed.current)}
           />
         </>

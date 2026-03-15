@@ -1,14 +1,49 @@
 'use client';
 
+import { useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
 import { EffectComposer, Bloom, SSAO, Vignette, ToneMapping } from '@react-three/postprocessing';
-import { BlendFunction, ToneMappingMode } from 'postprocessing';
+import { BlendFunction, ToneMappingMode, VignetteEffect } from 'postprocessing';
 import { Color } from 'three';
+
+// SPEED FEEL — vignette intensifies at high speed
+const BASE_VIGNETTE_DARKNESS = 0.5;
+const MAX_SPEED_VIGNETTE_DARKNESS = 0.85;
+const VIGNETTE_SPEED_THRESHOLD = 0.6; // Start intensifying at 60% max speed
 
 interface PostProcessingProps {
   quality?: 'low' | 'medium' | 'high' | 'ultra';
+  /** Speed ref (0–60+) for dynamic vignette intensity at high speed */
+  speedRef?: React.RefObject<number>;
 }
 
-export function PostProcessing({ quality = 'high' }: PostProcessingProps) {
+/** Updates vignette darkness each frame based on speed — tunnel vision effect at high speed */
+function SpeedVignette({ speedRef, baseDarkness = BASE_VIGNETTE_DARKNESS }: {
+  speedRef?: React.RefObject<number>;
+  baseDarkness?: number;
+}) {
+  const vignetteRef = useRef<VignetteEffect>(null);
+
+  useFrame(() => {
+    if (!vignetteRef.current || !speedRef) return;
+    const speedFactor = Math.min((speedRef.current ?? 0) / 60, 1);
+    const speedContribution = Math.max(0, (speedFactor - VIGNETTE_SPEED_THRESHOLD) / (1 - VIGNETTE_SPEED_THRESHOLD));
+    const targetDarkness = baseDarkness + (MAX_SPEED_VIGNETTE_DARKNESS - baseDarkness) * speedContribution;
+    // Direct uniform update — no React re-render needed
+    vignetteRef.current.uniforms.get('darkness')!.value = targetDarkness;
+  });
+
+  return (
+    <Vignette
+      ref={vignetteRef}
+      offset={0.25}
+      darkness={baseDarkness}
+      blendFunction={BlendFunction.NORMAL}
+    />
+  );
+}
+
+export function PostProcessing({ quality = 'high', speedRef }: PostProcessingProps) {
   // Quality presets
   const settings = {
     low: {
@@ -57,11 +92,7 @@ export function PostProcessing({ quality = 'high' }: PostProcessingProps) {
           color={new Color(0x000000)}
         />
         <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
-        <Vignette
-          offset={0.25}
-          darkness={0.5}
-          blendFunction={BlendFunction.NORMAL}
-        />
+        <SpeedVignette speedRef={speedRef} />
       </EffectComposer>
     );
   }
@@ -76,11 +107,7 @@ export function PostProcessing({ quality = 'high' }: PostProcessingProps) {
           mipmapBlur
         />
         <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
-        <Vignette
-          offset={0.25}
-          darkness={0.5}
-          blendFunction={BlendFunction.NORMAL}
-        />
+        <SpeedVignette speedRef={speedRef} />
       </EffectComposer>
     );
   }
@@ -88,11 +115,7 @@ export function PostProcessing({ quality = 'high' }: PostProcessingProps) {
   return (
     <EffectComposer multisampling={quality === 'low' ? 0 : 4}>
       <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
-      <Vignette
-        offset={0.25}
-        darkness={0.5}
-        blendFunction={BlendFunction.NORMAL}
-      />
+      <SpeedVignette speedRef={speedRef} />
     </EffectComposer>
   );
 }

@@ -263,6 +263,7 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
     right: false,
     brake: false,
     boost: false,
+    drift: false,
   });
 
   const starPositions = STADIUM_STAR_POSITIONS;
@@ -303,6 +304,10 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
         case 'shift':
           setInputState((prev) => ({ ...prev, boost: true }));
           break;
+        case 'r':
+        case 'e':
+          setInputState((prev) => ({ ...prev, drift: true }));
+          break;
         case 'escape':
         case 'p':
           setIsPaused(true);
@@ -329,6 +334,10 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
           break;
         case 'shift':
           setInputState((prev) => ({ ...prev, boost: false }));
+          break;
+        case 'r':
+        case 'e':
+          setInputState((prev) => ({ ...prev, drift: false }));
           break;
       }
     };
@@ -372,7 +381,7 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
 
   return (
     <div className="w-full h-screen relative">
-      <Scene3D showSky debug={false}>
+      <Scene3D showSky debug={false} speedRef={speedRef}>
         {/* Arena */}
         <Arena />
         <StadiumWalls />

@@ -161,6 +161,45 @@ export function isInMudPit(x: number, z: number): boolean {
   return false;
 }
 
+// ── JUMP MODE SURFACE TYPE SYSTEM ──
+export type JumpSurfaceType = 'road' | 'dirt' | 'mud' | 'bridge' | 'tunnel';
+
+export interface JumpSurfaceInfo {
+  type: JumpSurfaceType;
+  /** Speed friction multiplier per frame (higher = less friction). Applied as Math.pow(value, delta*60) */
+  speedFriction: number;
+  /** Lateral grip multiplier (0 = ice, 1 = full grip) */
+  lateralGrip: number;
+  /** Dust particle color for this surface */
+  dustColor: string;
+}
+
+const JUMP_SURFACE_ROAD: JumpSurfaceInfo = { type: 'road', speedFriction: 1.0, lateralGrip: 1.0, dustColor: '#A0A0A0' };
+const JUMP_SURFACE_DIRT: JumpSurfaceInfo = { type: 'dirt', speedFriction: 0.97, lateralGrip: 0.75, dustColor: '#D2B48C' };
+const JUMP_SURFACE_MUD: JumpSurfaceInfo = { type: 'mud', speedFriction: 0.92, lateralGrip: 0.5, dustColor: '#6B4226' };
+const JUMP_SURFACE_BRIDGE: JumpSurfaceInfo = { type: 'bridge', speedFriction: 0.99, lateralGrip: 0.85, dustColor: '#C0C0C0' };
+const JUMP_SURFACE_TUNNEL: JumpSurfaceInfo = { type: 'tunnel', speedFriction: 0.99, lateralGrip: 0.9, dustColor: '#888888' };
+
+/** Determine the surface type at a world position in jump mode. */
+export function getJumpSurfaceType(x: number, z: number): JumpSurfaceInfo {
+  // Mud pits — lowest grip, strong friction
+  if (isInMudPit(x, z)) return JUMP_SURFACE_MUD;
+
+  // Bridge — metal surface
+  const bridge = isOnBridge(x, z);
+  if (bridge.onBridge) return JUMP_SURFACE_BRIDGE;
+
+  // Tunnel — concrete floor
+  const tunnel = isInTunnel(x, z);
+  if (tunnel.inTunnel) return JUMP_SURFACE_TUNNEL;
+
+  // Paved roads in jump arena: N-S road (x ≈ 0) and E-W road (z ≈ 0), 8 units wide
+  if (Math.abs(x) < 8 || Math.abs(z) < 8) return JUMP_SURFACE_ROAD;
+
+  // Default: desert dirt
+  return JUMP_SURFACE_DIRT;
+}
+
 // =============================================
 // REALISTIC TERRAIN GROUND
 // =============================================

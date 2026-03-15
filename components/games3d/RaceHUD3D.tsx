@@ -44,6 +44,15 @@ interface RaceHUD3DProps {
   learningCorrectCount?: number;
   learningTargetCount?: number;
   learningScorePopups?: number[]; // timestamps of recent correct collections
+  driftLevel?: number; // 0=none, 1=blue, 2=orange, 3=purple
+  // Phase 10 props
+  isPreRace?: boolean;
+  onStartRace?: () => void;
+  truckName?: string;
+  truckStyle?: string;
+  onPrevTruck?: () => void;
+  onNextTruck?: () => void;
+  aiFinishGaps?: number[];
 }
 
 function formatTime(seconds: number): string {
@@ -233,7 +242,15 @@ const Minimap = memo(function Minimap({ playerPosition, playerRotation, aiPositi
   trackLength: number;
   trackWidth: number;
 }) {
-  const mapSize = 140;
+  // Phase 9B: Smaller minimap on mobile to avoid touch button overlap
+  const [isSmallScreen, setIsSmallScreen] = useState(false);
+  useEffect(() => {
+    const check = () => setIsSmallScreen(window.innerWidth < 768);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
+  const mapSize = isSmallScreen ? 90 : 140;
   const padding = 12;
 
   // Track extents (matching kid-friendly track with S-curves)
@@ -429,6 +446,141 @@ function CountdownOverlay({ count }: { count: number }) {
   );
 }
 
+// Phase 10A: Pre-race truck selection and starting grid overlay
+function PreRaceOverlay({
+  truckName,
+  truckStyle,
+  onPrevTruck,
+  onNextTruck,
+  onStartRace,
+  onExit,
+}: {
+  truckName: string;
+  truckStyle: string;
+  onPrevTruck: () => void;
+  onNextTruck: () => void;
+  onStartRace: () => void;
+  onExit: () => void;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-gradient-to-b from-black/60 via-black/30 to-black/60 flex flex-col items-center justify-center z-50"
+    >
+      {/* Title */}
+      <motion.h1
+        initial={{ y: -40, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ type: 'spring', damping: 15 }}
+        className="text-5xl md:text-6xl font-black text-white mb-2"
+        style={{ textShadow: '3px 3px 0 rgba(0,0,0,0.6)' }}
+      >
+        MONSTER TRUCK RACE
+      </motion.h1>
+
+      <motion.p
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.3 }}
+        className="text-white/60 text-lg mb-8"
+      >
+        Choose your truck and hit the track!
+      </motion.p>
+
+      {/* Truck selector */}
+      <motion.div
+        initial={{ scale: 0.8, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ delay: 0.2, type: 'spring', damping: 12 }}
+        className="flex items-center gap-6 mb-8"
+      >
+        <button
+          onClick={onPrevTruck}
+          className="w-14 h-14 rounded-full bg-white/20 backdrop-blur-sm border-2 border-white/30 flex items-center justify-center hover:bg-white/30 transition-colors"
+        >
+          <span className="text-3xl text-white font-bold">&#x2190;</span>
+        </button>
+
+        <div className="text-center">
+          <div className="bg-white/10 backdrop-blur-sm rounded-2xl px-10 py-6 border border-white/20 min-w-[200px]">
+            <motion.div
+              key={truckStyle}
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ type: 'spring', damping: 15 }}
+            >
+              <div className="text-6xl mb-2">🚛</div>
+              <p className="text-2xl font-black text-white" style={{ textShadow: '2px 2px 0 rgba(0,0,0,0.5)' }}>
+                {truckName}
+              </p>
+              <p className="text-sm text-white/50 mt-1 uppercase tracking-wider">{truckStyle}</p>
+            </motion.div>
+          </div>
+        </div>
+
+        <button
+          onClick={onNextTruck}
+          className="w-14 h-14 rounded-full bg-white/20 backdrop-blur-sm border-2 border-white/30 flex items-center justify-center hover:bg-white/30 transition-colors"
+        >
+          <span className="text-3xl text-white font-bold">&#x2192;</span>
+        </button>
+      </motion.div>
+
+      {/* Starting grid info */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.4 }}
+        className="bg-white/10 backdrop-blur-sm rounded-xl px-6 py-3 border border-white/10 mb-8"
+      >
+        <div className="flex items-center gap-4 text-white/70 text-sm">
+          <span><Flag className="w-4 h-4 inline mr-1" />3 Laps</span>
+          <span>|</span>
+          <span>4 Racers</span>
+          <span>|</span>
+          <span>Desert Circuit</span>
+        </div>
+      </motion.div>
+
+      {/* Action buttons */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.5 }}
+        className="flex gap-4"
+      >
+        <button
+          onClick={onStartRace}
+          className="bg-gradient-to-r from-green-500 to-green-600 text-white rounded-xl px-10 py-4 font-black text-xl flex items-center gap-3 hover:from-green-600 hover:to-green-700 transition-all shadow-lg shadow-green-500/30"
+        >
+          <Flag className="w-6 h-6" />
+          START RACE
+        </button>
+
+        <button
+          onClick={onExit}
+          className="bg-gradient-to-r from-gray-600 to-gray-700 text-white rounded-xl px-8 py-4 font-bold text-lg flex items-center gap-2 hover:from-gray-700 hover:to-gray-800 transition-all"
+        >
+          <Home className="w-5 h-5" />
+          Exit
+        </button>
+      </motion.div>
+
+      {/* Animated engine rev hint */}
+      <motion.p
+        initial={{ opacity: 0 }}
+        animate={{ opacity: [0.3, 0.7, 0.3] }}
+        transition={{ repeat: Infinity, duration: 2 }}
+        className="text-white/40 text-sm mt-6"
+      >
+        Trucks are revving on the starting grid...
+      </motion.p>
+    </motion.div>
+  );
+}
+
 function PauseMenu({
   onResume,
   onRestart,
@@ -490,6 +642,7 @@ function FinishScreen({
   totalLaps,
   onRestart,
   onExit,
+  aiFinishGaps = [],
 }: {
   position: number;
   time: number;
@@ -498,6 +651,7 @@ function FinishScreen({
   totalLaps: number;
   onRestart: () => void;
   onExit: () => void;
+  aiFinishGaps?: number[];
 }) {
   const suffix = position === 1 ? 'st' : position === 2 ? 'nd' : position === 3 ? 'rd' : 'th';
   const trophyColor = position === 1 ? 'text-yellow-400' : position === 2 ? 'text-gray-300' : position === 3 ? 'text-orange-400' : 'text-gray-500';
@@ -582,6 +736,52 @@ function FinishScreen({
                 <Gauge className="w-4 h-4" /> Best Lap
               </span>
               <span className="font-mono font-bold text-green-400">{formatTime(bestLapTime)}</span>
+            </motion.div>
+          )}
+
+          {/* Phase 10C: Race results with all positions and time gaps */}
+          {aiFinishGaps.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 1.0 }}
+              className="mt-3 pt-3 border-t border-white/10"
+            >
+              <p className="text-white/40 text-xs font-bold uppercase tracking-wider mb-2">Race Results</p>
+              {[1, 2, 3, 4].map((pos) => {
+                const isPlayer = pos === position;
+                const suffix = pos === 1 ? 'st' : pos === 2 ? 'nd' : pos === 3 ? 'rd' : 'th';
+                const AI_NAMES = ['Dragon', 'Bull', 'Flames'];
+                // Calculate gap: player is at time, AIs are at time + gap
+                let gap = 0;
+                let name = 'You';
+                if (!isPlayer) {
+                  // Find the AI index for this position
+                  const aiPositions = [1, 2, 3, 4].filter(p => p !== position);
+                  const aiIdx = aiPositions.indexOf(pos);
+                  if (aiIdx >= 0 && aiIdx < aiFinishGaps.length) {
+                    gap = aiFinishGaps[aiIdx];
+                    name = AI_NAMES[aiIdx] || `AI ${aiIdx + 1}`;
+                  }
+                }
+                return (
+                  <motion.div
+                    key={pos}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 1.1 + pos * 0.1 }}
+                    className={`flex justify-between items-center py-1 ${isPlayer ? 'text-yellow-400 font-bold' : 'text-white/50'}`}
+                  >
+                    <span className="text-sm">
+                      <Trophy className="w-3 h-3 inline mr-1" />
+                      {pos}{suffix} — {isPlayer ? 'You' : name}
+                    </span>
+                    <span className="font-mono text-xs">
+                      {isPlayer ? formatTime(time) : `+${gap.toFixed(1)}s`}
+                    </span>
+                  </motion.div>
+                );
+              })}
             </motion.div>
           )}
         </div>
@@ -779,9 +979,34 @@ export const RaceHUD3D = memo(function RaceHUD3D({
   learningCorrectCount = 0,
   learningTargetCount = 5,
   learningScorePopups = [],
+  driftLevel = 0,
+  isPreRace = false,
+  onStartRace,
+  truckName = '',
+  truckStyle = '',
+  onPrevTruck,
+  onNextTruck,
+  aiFinishGaps = [],
 }: RaceHUD3DProps) {
+  // Speed lines: visible when > 80% max speed
+  const speedRatio = speed / maxSpeed;
+  const showSpeedLines = speedRatio > 0.8;
+  const speedLineOpacity = showSpeedLines ? Math.min(1, (speedRatio - 0.8) / 0.2) * 0.6 : 0;
+
   return (
     <>
+      {/* Speed lines overlay — radial streaks at screen edges for velocity feel */}
+      {showSpeedLines && (
+        <div
+          className="fixed inset-0 z-30 pointer-events-none"
+          style={{
+            opacity: speedLineOpacity,
+            background: `radial-gradient(ellipse at center, transparent 40%, rgba(255,255,255,0.15) 70%, rgba(255,255,255,0.4) 100%)`,
+            mixBlendMode: 'screen',
+          }}
+        />
+      )}
+
       {/* Learning Banner - top center below mode toggle */}
       {learningActive && learningBannerText && learningCategory && (
         <LearningBanner
@@ -840,21 +1065,32 @@ export const RaceHUD3D = memo(function RaceHUD3D({
         <PositionBadge position={position} total={totalRacers} />
       </div>
 
-      {/* Left side - Item slot */}
-      <div className="fixed top-1/3 left-4 z-40 pointer-events-auto">
+      {/* Left side - Item slot (Phase 9B: higher on mobile to clear steering buttons) */}
+      <div className="fixed top-1/4 md:top-1/3 left-4 z-40 pointer-events-auto">
         <ItemSlot item={currentItem} onUse={onUseItem} />
       </div>
 
-      {/* Bottom left - Speedometer and coins */}
-      <div className="fixed bottom-4 left-4 z-40 pointer-events-none">
+      {/* Bottom left - Speedometer and coins (Phase 9B: pushed up on mobile to clear touch buttons) */}
+      <div className="fixed bottom-32 md:bottom-4 left-4 z-40 pointer-events-none">
         <div className="flex flex-col items-start gap-2">
           <CoinCounter coins={coins} />
           <Speedometer speed={speed} maxSpeed={maxSpeed} />
+          {/* Drift charge indicator */}
+          {driftLevel > 0 && (
+            <div className="flex items-center gap-1 mt-1">
+              <span className="text-xs font-bold" style={{
+                color: driftLevel === 1 ? '#4488FF' : driftLevel === 2 ? '#FF8800' : '#AA44FF',
+                textShadow: `0 0 8px ${driftLevel === 1 ? '#4488FF' : driftLevel === 2 ? '#FF8800' : '#AA44FF'}`,
+              }}>
+                DRIFT {driftLevel === 1 ? '⚡' : driftLevel === 2 ? '⚡⚡' : '⚡⚡⚡'}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Bottom right - Minimap */}
-      <div className="fixed bottom-4 right-4 z-40 pointer-events-none">
+      {/* Bottom right - Minimap (Phase 9B: pushed up and shrunk on mobile to clear touch buttons) */}
+      <div className="fixed bottom-32 md:bottom-4 right-4 z-40 pointer-events-none">
         <Minimap
           playerPosition={{ x: playerX, z: playerZ }}
           playerRotation={playerRotation}
@@ -963,7 +1199,7 @@ export const RaceHUD3D = memo(function RaceHUD3D({
         )}
       </AnimatePresence>
 
-      {/* Finish screen */}
+      {/* Finish screen (Phase 10C: with AI finish gaps) */}
       <AnimatePresence>
         {isFinished && (
           <FinishScreen
@@ -973,6 +1209,21 @@ export const RaceHUD3D = memo(function RaceHUD3D({
             bestLapTime={bestLapTime}
             totalLaps={totalLaps}
             onRestart={onRestart}
+            onExit={onExit}
+            aiFinishGaps={aiFinishGaps}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Phase 10A: Pre-race truck selection and starting grid */}
+      <AnimatePresence>
+        {isPreRace && (
+          <PreRaceOverlay
+            truckName={truckName}
+            truckStyle={truckStyle}
+            onPrevTruck={onPrevTruck || (() => {})}
+            onNextTruck={onNextTruck || (() => {})}
+            onStartRace={onStartRace || (() => {})}
             onExit={onExit}
           />
         )}
