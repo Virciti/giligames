@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import * as THREE from 'three';
 import { RigidBody, CuboidCollider } from '@react-three/rapier';
 import { Scene3D } from './Scene3D';
@@ -21,6 +21,16 @@ const TRUCK_STYLE_MAP: Record<string, string> = {
   'truck-orange-blaze': 'bull',
   'truck-rainbow-racer': 'stars',
 };
+
+// Stable constants — extracted outside component to prevent re-creation each render
+const STADIUM_CAMERA_OFFSET = new THREE.Vector3(0, 5, -12);
+const STADIUM_STAR_POSITIONS: [number, number, number][] = [
+  [20, 3, 0],
+  [-20, 3, 0],
+  [0, 3, 20],
+  [0, 3, -20],
+  [30, 5, 30],
+];
 
 interface StadiumGame3DProps {
   onExit?: () => void;
@@ -242,8 +252,9 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
   const [starsCollected, setStarsCollected] = useState(0);
   const [collectedStars, setCollectedStars] = useState<Set<number>>(new Set());
 
-  const [truckPosition, setTruckPosition] = useState(new THREE.Vector3(0, 2, 0));
-  const [truckRotation, setTruckRotation] = useState(new THREE.Euler(0, 0, 0));
+  const truckPositionRef = useRef(new THREE.Vector3(0, 2, 0));
+  const truckRotationRef = useRef(new THREE.Euler(0, 0, 0));
+  const speedRef = useRef(0);
 
   const [inputState, setInputState] = useState({
     forward: false,
@@ -254,14 +265,7 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
     boost: false,
   });
 
-  // Star positions in the arena
-  const starPositions: [number, number, number][] = [
-    [20, 3, 0],
-    [-20, 3, 0],
-    [0, 3, 20],
-    [0, 3, -20],
-    [30, 5, 30],
-  ];
+  const starPositions = STADIUM_STAR_POSITIONS;
 
   // Timer
   useEffect(() => {
@@ -337,9 +341,10 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
     };
   }, [isPaused]);
 
-  const handlePositionUpdate = useCallback((pos: THREE.Vector3, rot: THREE.Euler) => {
-    setTruckPosition(pos);
-    setTruckRotation(rot);
+  const handlePositionUpdate = useCallback((pos: THREE.Vector3, rot: THREE.Euler, spd: number) => {
+    truckPositionRef.current.copy(pos);
+    truckRotationRef.current.copy(rot);
+    speedRef.current = spd;
 
     // Check star collection
     starPositions.forEach((starPos, index) => {
@@ -360,8 +365,9 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
     setStarsCollected(0);
     setCollectedStars(new Set());
     setIsPaused(false);
-    setTruckPosition(new THREE.Vector3(0, 2, 0));
-    setTruckRotation(new THREE.Euler(0, 0, 0));
+    truckPositionRef.current.set(0, 2, 0);
+    truckRotationRef.current.set(0, 0, 0);
+    speedRef.current = 0;
   };
 
   return (
@@ -400,9 +406,10 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
 
         {/* Classic racing game third-person camera */}
         <FollowCamera
-          target={truckPosition}
-          targetRotation={truckRotation}
-          offset={new THREE.Vector3(0, 5, -12)}
+          targetRef={truckPositionRef}
+          targetRotationRef={truckRotationRef}
+          speedRef={speedRef}
+          offset={STADIUM_CAMERA_OFFSET}
           lookAhead={15}
           smoothness={0.12}
         />
