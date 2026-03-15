@@ -150,6 +150,7 @@ export function AITruck({
   const currentRotation = useRef(0);
   const trackProgress = useRef(0);
   const spinPhaseRef = useRef(0);
+  const smoothGroundHeight = useRef(WHEEL_RADIUS + 0.5);
 
   // AI difficulty settings - fast enough to race competitively
   const difficultyMultiplier = difficulty === 'easy' ? 0.75 : difficulty === 'medium' ? 0.88 : 1.0;
@@ -249,8 +250,16 @@ export function AITruck({
     const newX = pos.x + moveX;
     const newZ = pos.z + moveZ;
 
+    // Smooth ground height lerp — prevents AI truck vertical jitter
+    const targetY = getRaceTrackHeight(newX, newZ) + WHEEL_RADIUS + 0.5;
+    smoothGroundHeight.current = THREE.MathUtils.lerp(
+      smoothGroundHeight.current,
+      targetY,
+      Math.min(1, 4 * delta)
+    );
+
     // Apply position
-    chassis.setTranslation({ x: newX, y: getRaceTrackHeight(newX, newZ) + WHEEL_RADIUS + 0.5, z: newZ }, true);
+    chassis.setTranslation({ x: newX, y: smoothGroundHeight.current, z: newZ }, true);
     chassis.setRotation(
       new THREE.Quaternion().setFromEuler(new THREE.Euler(0, currentRotation.current, 0)),
       true

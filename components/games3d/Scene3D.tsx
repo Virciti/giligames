@@ -157,7 +157,7 @@ export function Scene3D({
 
       {/* Physics World */}
       <Suspense fallback={<LoadingFallback />}>
-        <Physics gravity={[0, -20, 0]} debug={debug}>
+        <Physics gravity={[0, -25, 0]} debug={debug}>
           {children}
         </Physics>
       </Suspense>

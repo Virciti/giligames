@@ -28,7 +28,7 @@ const BRAKE_FORCE = 30;
 const TURN_SPEED = 2.2; // Responsive steering at speed
 const FRICTION = 0.98; // Coasts further at high speed
 const TURN_SPEED_REDUCTION = 0.35; // Slight reduction at top speed
-const GRAVITY = 30;
+const GRAVITY = 25; // Arcade gravity — aligned closer to Scene3D Physics (20) but snappier for gameplay
 const JUMP_MODE_SPEED = 32; // Fast in jump mode too
 const AUTO_STRAIGHTEN = 0.25; // Helps truck go straight when not steering
 
@@ -776,7 +776,7 @@ export function MonsterTruck({
     // ARCADE PHYSICS
     if (isSpinning) {
       // Rapid uncontrolled spin + heavy speed loss
-      currentSpeed.current *= 0.92; // Bleed speed fast
+      currentSpeed.current *= Math.pow(0.92, delta * 60); // Bleed speed fast (frame-rate independent)
       currentRotation.current += 8 * delta; // Fast spin (~1.3 rev/s)
     } else if (input.forward) {
       const boost = input.boost ? 1.4 : 1;
@@ -790,7 +790,7 @@ export function MonsterTruck({
         currentSpeed.current = Math.min(0, currentSpeed.current + BRAKE_FORCE * delta);
       }
     } else {
-      currentSpeed.current *= FRICTION;
+      currentSpeed.current *= Math.pow(FRICTION, delta * 60); // Frame-rate independent coasting
       if (Math.abs(currentSpeed.current) < 0.1) currentSpeed.current = 0;
     }
 
@@ -886,35 +886,43 @@ export function MonsterTruck({
       }
     }
 
-    // JUMP MODE - Keep within expanded open world bounds
+    // JUMP MODE - Keep within expanded open world bounds (smooth push-back)
     if (gameMode === 'jump') {
       const arenaHalfWidth = 210;
       const arenaHalfLength = 200;
 
-      // Clamp to arena bounds
-      if (Math.abs(finalX) > arenaHalfWidth) {
-        finalX = Math.sign(finalX) * arenaHalfWidth;
-        currentSpeed.current *= 0.3;
+      // Smooth push-back instead of hard clamp — prevents camera jitter
+      const overX = Math.abs(finalX) - arenaHalfWidth;
+      if (overX > 0) {
+        const pushBack = Math.min(overX / 10, 0.5); // Gradual push, max 50%
+        finalX = finalX + (Math.sign(finalX) * -arenaHalfWidth - finalX) * pushBack;
+        currentSpeed.current *= Math.pow(0.3, delta * 60);
       }
-      if (Math.abs(finalZ) > arenaHalfLength) {
-        finalZ = Math.sign(finalZ) * arenaHalfLength;
-        currentSpeed.current *= 0.3;
+      const overZ = Math.abs(finalZ) - arenaHalfLength;
+      if (overZ > 0) {
+        const pushBack = Math.min(overZ / 10, 0.5);
+        finalZ = finalZ + (Math.sign(finalZ) * -arenaHalfLength - finalZ) * pushBack;
+        currentSpeed.current *= Math.pow(0.3, delta * 60);
       }
 
       // Mud pit slow-down effect
       if (isInMudPit(finalX, finalZ)) {
-        currentSpeed.current *= 0.96; // Drag in mud
+        currentSpeed.current *= Math.pow(0.96, delta * 60); // Drag in mud (frame-rate independent)
       }
     }
 
-    // Keep within overall arena bounds (both modes)
+    // Keep within overall arena bounds (both modes) — smooth radial push-back
     const maxArenaDistance = gameMode === 'jump' ? 280 : 220;
     const distFromOrigin = Math.sqrt(finalX * finalX + finalZ * finalZ);
     if (distFromOrigin > maxArenaDistance) {
+      const overDist = distFromOrigin - maxArenaDistance;
+      const pushBack = Math.min(overDist / 15, 0.5); // Gradual radial push
       const angle = Math.atan2(finalZ, finalX);
-      finalX = Math.cos(angle) * maxArenaDistance;
-      finalZ = Math.sin(angle) * maxArenaDistance;
-      currentSpeed.current *= 0.2;
+      const targetX = Math.cos(angle) * maxArenaDistance;
+      const targetZ = Math.sin(angle) * maxArenaDistance;
+      finalX = finalX + (targetX - finalX) * pushBack;
+      finalZ = finalZ + (targetZ - finalZ) * pushBack;
+      currentSpeed.current *= Math.pow(0.2, delta * 60);
     }
 
     // Calculate ground height (for ramps in jump mode)
@@ -966,8 +974,8 @@ export function MonsterTruck({
       }
 
       // Smooth the ground height to prevent jitter from terrain noise
-      // Use fast lerp (12/s) so we track terrain closely without frame-to-frame snapping
-      const lerpSpeed = 12;
+      // Use gentle lerp (4/s) — fast enough to track terrain, slow enough to prevent camera jitter
+      const lerpSpeed = 4;
       smoothGroundHeight.current = THREE.MathUtils.lerp(
         smoothGroundHeight.current,
         groundHeight,
@@ -1006,7 +1014,7 @@ export function MonsterTruck({
       smoothGroundHeight.current = THREE.MathUtils.lerp(
         smoothGroundHeight.current,
         groundHeight,
-        Math.min(1, 12 * delta)
+        Math.min(1, 4 * delta)
       );
       const smoothGround = smoothGroundHeight.current;
 
