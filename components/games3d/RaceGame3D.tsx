@@ -12,6 +12,7 @@ import { RaceHUD3D } from './RaceHUD3D';
 import { ItemBox, Collectible, BoostPad, PowerUpType } from './ItemBox';
 import { JumpArena } from './JumpArena';
 import { LearningCoinManager } from './LearningCoinManager';
+import { RaceSFX } from './RaceSFX';
 import { usePlayerStore } from '@/lib/stores/player-store';
 import { useLearningChallengeStore } from '@/lib/stores/learning-game-store';
 import { getTruckById } from '@/content/trucks';
@@ -193,6 +194,33 @@ function ThrownBananaProjectile({ from, to }: {
   );
 }
 
+// Banana peel lying flat on the track - hazard for the player
+function DroppedBananaPeel({ position }: { position: THREE.Vector3 }) {
+  const meshRef = useRef<THREE.Group>(null);
+
+  useFrame((state) => {
+    if (!meshRef.current) return;
+    meshRef.current.rotation.y = state.clock.elapsedTime * 0.5;
+  });
+
+  return (
+    <group ref={meshRef} position={[position.x, position.y + 0.15, position.z]}>
+      {/* Flat banana peel on the ground */}
+      <mesh rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.5, 0.15, 6, 12, Math.PI * 0.7]} />
+        <meshStandardMaterial
+          color="#FFE135"
+          emissive="#FFD700"
+          emissiveIntensity={0.3}
+          roughness={0.5}
+        />
+      </mesh>
+      {/* Warning glow */}
+      <pointLight color="#FFD700" intensity={0.8} distance={4} />
+    </group>
+  );
+}
+
 export function RaceGame3D({ onExit }: RaceGame3DProps) {
   // Read player's selected truck from store
   const selectedTruckId = usePlayerStore((s) => s.selectedTruck);
@@ -213,7 +241,25 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
 
   // Speed level slider (1-10) - Level 5 = 1.0x (default), Level 10 = 2.0x (lightning fast)
   const [speedLevel, setSpeedLevel] = useState(5);
+  const [speedPulse, setSpeedPulse] = useState(false);
+  const prevSpeedLevelRef = useRef(5);
   const speedMultiplier = 0.2 + (speedLevel - 1) * 0.2; // 1=0.2x, 5=1.0x, 10=2.0x
+
+  // Tactile feedback when speed level changes
+  const handleSpeedLevelChange = useCallback((newLevel: number) => {
+    if (newLevel === prevSpeedLevelRef.current) return;
+    prevSpeedLevelRef.current = newLevel;
+    setSpeedLevel(newLevel);
+
+    // Visual pulse
+    setSpeedPulse(true);
+    setTimeout(() => setSpeedPulse(false), 200);
+
+    // Haptic feedback on supported devices
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate(newLevel >= 9 ? [30, 20, 30] : 15);
+    }
+  }, []);
 
   // Track parameters - longer winding track for more fun
   const trackLength = 120;
@@ -252,6 +298,17 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
   ]);
   const gameClockRef = useRef(0);
 
+  // Dropped banana hazards on the track (from AI trucks)
+  const [droppedBananas, setDroppedBananas] = useState<THREE.Vector3[]>([]);
+  const [playerSpinUntil, setPlayerSpinUntil] = useState(0);
+  const [slipNotification, setSlipNotification] = useState<string | null>(null);
+  const lastBananaDropRef = useRef(0);
+
+  // Truck-truck collision state
+  const [collisionSlowdown, setCollisionSlowdown] = useState(false);
+  const [bumpNotification, setBumpNotification] = useState<string | null>(null);
+  const collisionCooldownRef = useRef(0);
+
   // Vehicle state
   const [truckPosition, setTruckPosition] = useState(new THREE.Vector3(GRID_POSITIONS[0][0], GRID_POSITIONS[0][1], GRID_POSITIONS[0][2]));
   const [truckRotation, setTruckRotation] = useState(new THREE.Euler(0, RACE_START_ROTATION, 0));
@@ -264,6 +321,27 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
   // AI truck progress tracking for position calculation
   const aiProgressRef = useRef<number[]>([0, 0, 0]);
   const playerProgressRef = useRef(0);
+  const prevPlayerProgressRef = useRef(0);
+
+  // Difficulty progression — AI gets harder each lap
+  const [aiDifficulty, setAiDifficulty] = useState<'easy' | 'medium' | 'hard'>('easy');
+
+  // Lap time tracking for post-race stats
+  const [lapTimes, setLapTimes] = useState<number[]>([]);
+  const lapStartTimeRef = useRef(0);
+
+  // Lap change notification overlay
+  const [lapNotification, setLapNotification] = useState<string | null>(null);
+
+  // Position change notification
+  const [positionNotification, setPositionNotification] = useState<{ text: string; direction: 'up' | 'down' } | null>(null);
+  const prevPositionRef = useRef(1);
+
+  // SFX one-shot triggers (increment to fire)
+  const [sfxCollision, setSfxCollision] = useState(0);
+  const [sfxSlip, setSfxSlip] = useState(0);
+  const [sfxLap, setSfxLap] = useState(0);
+  const [sfxFinish, setSfxFinish] = useState(0);
 
   // Input state
   const [inputState, setInputState] = useState({
@@ -305,6 +383,19 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
 
       const sortedProgress = [...allProgress].sort((a, b) => b - a);
       const playerPosition = sortedProgress.indexOf(playerProgress) + 1;
+
+      // Detect position change and show notification
+      if (playerPosition !== prevPositionRef.current && raceTime > 1) {
+        const movedUp = playerPosition < prevPositionRef.current;
+        const suffix = playerPosition === 1 ? 'st' : playerPosition === 2 ? 'nd' : playerPosition === 3 ? 'rd' : 'th';
+        setPositionNotification({
+          text: movedUp ? `${playerPosition}${suffix}` : `${playerPosition}${suffix}`,
+          direction: movedUp ? 'up' : 'down',
+        });
+        setTimeout(() => setPositionNotification(null), 1800);
+      }
+      prevPositionRef.current = playerPosition;
+
       setPosition(playerPosition);
     }, 100);
 
@@ -396,16 +487,22 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     };
   }, [phase, currentItem]);
 
-  // Countdown timer
+  // Countdown timer — 3, 2, 1, GO! then race starts
   useEffect(() => {
     if (phase !== 'countdown') return;
 
     const timer = setInterval(() => {
       setCountdown((prev) => {
-        if (prev === null || prev <= 0) {
+        if (prev === null) {
+          clearInterval(timer);
+          return null;
+        }
+        if (prev <= 0) {
+          // "GO!" was shown — now start racing and clear overlay after a beat
           clearInterval(timer);
           setPhase('racing');
-          return null;
+          setTimeout(() => setCountdown(null), 800);
+          return 0; // keep 0 visible briefly
         }
         return prev - 1;
       });
@@ -433,9 +530,43 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     setTruckRotation(rot);
     setSpeed(spd * 1.5);
 
-    // Update player progress
-    playerProgressRef.current = calculateProgress(pos);
-  }, [calculateProgress]);
+    // Update player progress and detect lap crossing
+    const newProgress = calculateProgress(pos);
+    const prevProgress = prevPlayerProgressRef.current;
+
+    // Detect finish-line crossing: progress wraps from high (~0.9+) to low (~0.1-)
+    if (prevProgress > 0.85 && newProgress < 0.15 && phase === 'racing') {
+      // Record completed lap time
+      const now = raceTime;
+      const lapTime = now - lapStartTimeRef.current;
+      if (lapTime > 1) { // guard against spurious double-detections
+        setLapTimes((prev) => [...prev, lapTime]);
+        lapStartTimeRef.current = now;
+      }
+
+      setLap((prevLap) => {
+        const nextLap = prevLap + 1;
+        if (nextLap > totalLaps) {
+          // Race complete!
+          setPhase('finished');
+          setSfxFinish((c) => c + 1);
+          return prevLap;
+        }
+        // Increase AI difficulty each lap
+        if (nextLap === 2) setAiDifficulty('medium');
+        if (nextLap === 3) setAiDifficulty('hard');
+        setSfxLap((c) => c + 1);
+        // Show lap notification overlay
+        const label = nextLap === totalLaps ? 'FINAL LAP!' : `LAP ${nextLap}`;
+        setLapNotification(label);
+        setTimeout(() => setLapNotification(null), 2000);
+        return nextLap;
+      });
+    }
+
+    prevPlayerProgressRef.current = newProgress;
+    playerProgressRef.current = newProgress;
+  }, [calculateProgress, phase, totalLaps]);
 
   // Handle AI position updates - also track positions for banana targeting
   const handleAIPositionUpdate = useCallback((index: number) => (pos: THREE.Vector3, progress: number) => {
@@ -570,6 +701,74 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
           }
         }
       });
+
+      // === AI BANANA DROP — every ~6 seconds a random AI drops a peel ===
+      if (now - lastBananaDropRef.current > 6) {
+        lastBananaDropRef.current = now;
+        const dropper = Math.floor(Math.random() * 3);
+        const aiPos = aiPositionsRef.current[dropper];
+        // Drop slightly behind the AI truck
+        const dropPos = new THREE.Vector3(
+          aiPos.x - (Math.random() - 0.5) * 3,
+          aiPos.y,
+          aiPos.z - (Math.random() - 0.5) * 3
+        );
+        setDroppedBananas(prev => {
+          // Keep max 5 on track at a time
+          const next = prev.length >= 5 ? prev.slice(1) : [...prev];
+          next.push(dropPos);
+          return next;
+        });
+      }
+
+      // === PLAYER BANANA SLIP CHECK ===
+      if (performance.now() / 1000 > playerSpinUntil) {
+        const pPos = truckPositionRef.current;
+        setDroppedBananas(prev => {
+          const remaining: THREE.Vector3[] = [];
+          let slipped = false;
+          for (const bp of prev) {
+            const dx = pPos.x - bp.x;
+            const dz = pPos.z - bp.z;
+            const distSq = dx * dx + dz * dz;
+            if (!slipped && distSq < 16) { // ~4 unit radius
+              slipped = true;
+              // Trigger spin
+              const spinEnd = performance.now() / 1000 + 2.0;
+              setPlayerSpinUntil(spinEnd);
+              setSlipNotification('SLIP!');
+              setSfxSlip((c) => c + 1);
+              setTimeout(() => setSlipNotification(null), 1500);
+              // Don't add this banana back — it's consumed
+            } else {
+              remaining.push(bp);
+            }
+          }
+          return slipped ? remaining : prev;
+        });
+      }
+
+      // === TRUCK-TRUCK COLLISION CHECK ===
+      collisionCooldownRef.current = Math.max(0, collisionCooldownRef.current - 0.05);
+      if (collisionCooldownRef.current <= 0) {
+        const pPos = truckPositionRef.current;
+        for (const aiPos of aiPositionsRef.current) {
+          const cdx = pPos.x - aiPos.x;
+          const cdz = pPos.z - aiPos.z;
+          const distSq = cdx * cdx + cdz * cdz;
+          if (distSq < 20) { // ~4.5 unit collision radius
+            collisionCooldownRef.current = 1.5; // 1.5s cooldown
+            setCollisionSlowdown(true);
+            setBumpNotification('BUMP!');
+            setSfxCollision((c) => c + 1);
+            setTimeout(() => {
+              setCollisionSlowdown(false);
+              setBumpNotification(null);
+            }, 500);
+            break;
+          }
+        }
+      }
     }, 50);
 
     return () => clearInterval(interval);
@@ -605,9 +804,27 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     });
     aiProgressRef.current = [0, 0, 0];
     playerProgressRef.current = 0;
+    prevPlayerProgressRef.current = 0;
+    setAiDifficulty('easy');
+    setLapNotification(null);
+    setPositionNotification(null);
+    prevPositionRef.current = 1;
+    setSfxCollision(0);
+    setSfxSlip(0);
+    setSfxLap(0);
+    setSfxFinish(0);
+    setLapTimes([]);
+    lapStartTimeRef.current = 0;
     setBananaScoreCount(0);
     setAiSpinUntil([0, 0, 0]);
     setThrownBanana(null);
+    setCollisionSlowdown(false);
+    setBumpNotification(null);
+    collisionCooldownRef.current = 0;
+    setDroppedBananas([]);
+    setPlayerSpinUntil(0);
+    setSlipNotification(null);
+    lastBananaDropRef.current = 0;
     setScorePopups([]);
     useLearningChallengeStore.getState().startLearningChallenge();
   }, []);
@@ -739,6 +956,11 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
                 gameClock={gameClockRef.current}
               />
             )}
+
+            {/* Dropped banana peels on the track — hazards for the player */}
+            {droppedBananas.map((pos, i) => (
+              <DroppedBananaPeel key={`drop-${i}-${pos.x.toFixed(1)}`} position={pos} />
+            ))}
           </>
         )}
 
@@ -765,7 +987,8 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
           onPositionUpdate={handlePositionUpdate}
           isPlayer
           gameMode={gameMode}
-          speedMultiplier={speedMultiplier}
+          speedMultiplier={speedMultiplier * (collisionSlowdown ? 0.3 : 1)}
+          spinUntil={playerSpinUntil}
         />
 
         {/* AI Trucks that actually race - only in race mode */}
@@ -775,7 +998,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
               startPosition={GRID_POSITIONS[1]}
               color="#228B22"
               truckStyle="dragon"
-              difficulty="easy"
+              difficulty={aiDifficulty}
               trackLength={trackLength}
               trackWidth={trackWidth}
               isRacing={isRacing}
@@ -787,7 +1010,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
               startPosition={GRID_POSITIONS[2]}
               color="#FF4500"
               truckStyle="bull"
-              difficulty="easy"
+              difficulty={aiDifficulty}
               trackLength={trackLength}
               trackWidth={trackWidth}
               isRacing={isRacing}
@@ -799,7 +1022,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
               startPosition={GRID_POSITIONS[3]}
               color="#32CD32"
               truckStyle="flames"
-              difficulty="easy"
+              difficulty={aiDifficulty}
               trackLength={trackLength}
               trackWidth={trackWidth}
               isRacing={isRacing}
@@ -831,10 +1054,22 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
         <FollowCamera
           target={truckPosition}
           targetRotation={truckRotation}
-          offset={new THREE.Vector3(0, 5, -10)}
           lookAhead={12}
+          shakeTrigger={sfxCollision + sfxSlip}
         />
       </Scene3D>
+
+      {/* Procedural racing sound effects */}
+      <RaceSFX
+        speed={speed}
+        isRacing={phase === 'racing'}
+        isBoosting={inputState.boost}
+        collisionTrigger={sfxCollision}
+        slipTrigger={sfxSlip}
+        lapTrigger={sfxLap}
+        finishTrigger={sfxFinish}
+        countdownBeep={countdown}
+      />
 
       {/* Mario Kart style HUD */}
       <RaceHUD3D
@@ -845,6 +1080,10 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
         lap={lap}
         totalLaps={totalLaps}
         time={raceTime}
+        bestLapTime={lapTimes.length > 0 ? Math.min(...lapTimes) : undefined}
+        lapTimes={lapTimes}
+        lapNotification={lapNotification}
+        positionNotification={positionNotification}
         isPaused={phase === 'paused'}
         isFinished={phase === 'finished'}
         countdown={countdown}
@@ -852,6 +1091,12 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
         currentItem={currentItem}
         playerX={truckPosition.x}
         playerZ={truckPosition.z}
+        playerRotation={truckRotation.y}
+        aiPositions={aiPositionsRef.current.map((p, i) => ({
+          x: p.x,
+          z: p.z,
+          color: ['#228B22', '#FF4500', '#32CD32'][i],
+        }))}
         onPause={handlePause}
         onResume={handleResume}
         onRestart={handleRestart}
@@ -878,8 +1123,43 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
         </div>
       )}
 
-      {/* Speed Level Slider */}
-      <div className="fixed right-4 top-1/2 -translate-y-1/2 z-40 flex flex-col items-center gap-2 bg-black/60 backdrop-blur-sm rounded-2xl px-3 py-4 border border-white/20">
+      {/* Truck collision bump notification */}
+      {bumpNotification && (
+        <div className="fixed top-1/3 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
+          <div className="bg-red-500/80 backdrop-blur-sm rounded-2xl px-8 py-3 border-2 border-white/40 animate-bounce">
+            <span className="text-3xl font-black text-white" style={{ textShadow: '2px 2px 0 rgba(0,0,0,0.5)' }}>
+              {bumpNotification}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Banana slip notification */}
+      {slipNotification && (
+        <div className="fixed top-1/3 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
+          <div className="bg-yellow-500/90 backdrop-blur-sm rounded-2xl px-8 py-3 border-2 border-yellow-300/60 animate-bounce">
+            <span className="text-3xl font-black text-white" style={{ textShadow: '2px 2px 0 rgba(0,0,0,0.5)' }}>
+              🍌 {slipNotification}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Speed Level Slider — with tactile feedback */}
+      <div
+        className="fixed right-4 top-1/2 -translate-y-1/2 z-40 flex flex-col items-center gap-2 rounded-2xl px-3 py-4 border transition-all duration-200"
+        style={{
+          background: speedPulse ? 'rgba(0,0,0,0.8)' : 'rgba(0,0,0,0.6)',
+          backdropFilter: 'blur(8px)',
+          borderColor: speedPulse
+            ? (speedLevel <= 3 ? '#22c55e' : speedLevel <= 6 ? '#eab308' : speedLevel <= 8 ? '#f97316' : '#ef4444')
+            : 'rgba(255,255,255,0.2)',
+          transform: speedPulse ? 'scale(1.05)' : 'scale(1)',
+          boxShadow: speedPulse
+            ? `0 0 20px ${speedLevel <= 3 ? '#22c55e40' : speedLevel <= 6 ? '#eab30840' : speedLevel <= 8 ? '#f9731640' : '#ef444440'}`
+            : 'none',
+        }}
+      >
         <span className="text-white font-bold text-xs tracking-wider">SPEED</span>
         <div className="relative h-48 w-8 flex items-center justify-center">
           <input
@@ -887,7 +1167,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
             min="1"
             max="10"
             value={speedLevel}
-            onChange={(e) => setSpeedLevel(Number(e.target.value))}
+            onChange={(e) => handleSpeedLevelChange(Number(e.target.value))}
             className="speed-slider absolute w-48 h-8 appearance-none bg-transparent cursor-pointer"
             style={{
               transform: 'rotate(-90deg)',
@@ -895,27 +1175,62 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
               background: 'transparent',
             }}
           />
-          {/* Track background */}
+          {/* Track background with tick marks */}
           <div className="absolute w-2 h-48 rounded-full overflow-hidden pointer-events-none">
             <div
-              className="absolute bottom-0 w-full rounded-full transition-all duration-150"
+              className="absolute bottom-0 w-full rounded-full"
               style={{
                 height: `${((speedLevel - 1) / 9) * 100}%`,
                 background: speedLevel <= 3 ? '#22c55e' : speedLevel <= 6 ? '#eab308' : speedLevel <= 8 ? '#f97316' : '#ef4444',
+                transition: 'height 0.15s ease-out, background 0.3s',
               }}
             />
             <div className="absolute inset-0 bg-white/10" />
           </div>
+          {/* Tick marks — 10 discrete notches */}
+          <div className="absolute left-full ml-1 h-48 flex flex-col justify-between pointer-events-none" style={{ paddingTop: 2, paddingBottom: 2 }}>
+            {[...Array(10)].map((_, i) => {
+              const level = 10 - i; // top = 10, bottom = 1
+              const isActive = level <= speedLevel;
+              const isZoneBoundary = level === 3 || level === 6 || level === 8;
+              return (
+                <div
+                  key={i}
+                  className="flex items-center gap-1"
+                >
+                  <div
+                    className="rounded-full transition-all duration-150"
+                    style={{
+                      width: isZoneBoundary ? 10 : 6,
+                      height: isZoneBoundary ? 3 : 2,
+                      backgroundColor: isActive
+                        ? (level <= 3 ? '#22c55e' : level <= 6 ? '#eab308' : level <= 8 ? '#f97316' : '#ef4444')
+                        : 'rgba(255,255,255,0.15)',
+                      boxShadow: isActive && level === speedLevel ? `0 0 6px ${level <= 3 ? '#22c55e' : level <= 6 ? '#eab308' : level <= 8 ? '#f97316' : '#ef4444'}` : 'none',
+                    }}
+                  />
+                </div>
+              );
+            })}
+          </div>
         </div>
         <span
-          className="text-2xl font-black tabular-nums"
+          className="text-2xl font-black tabular-nums transition-all duration-150"
           style={{
             color: speedLevel <= 3 ? '#22c55e' : speedLevel <= 6 ? '#eab308' : speedLevel <= 8 ? '#f97316' : '#ef4444',
+            transform: speedPulse ? 'scale(1.3)' : 'scale(1)',
           }}
         >
           {speedLevel}
         </span>
-        <span className="text-white/50 text-[10px]">
+        <span
+          className="text-[10px] font-bold tracking-wider transition-all duration-150"
+          style={{
+            color: speedPulse
+              ? (speedLevel <= 3 ? '#22c55e' : speedLevel <= 6 ? '#eab308' : speedLevel <= 8 ? '#f97316' : '#ef4444')
+              : 'rgba(255,255,255,0.5)',
+          }}
+        >
           {speedLevel <= 2 ? 'CRUISE' : speedLevel <= 4 ? 'FAST' : speedLevel <= 6 ? 'RACE' : speedLevel <= 8 ? 'TURBO' : 'MAX'}
         </span>
       </div>

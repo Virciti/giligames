@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Pause, Play, RotateCcw, Home, Gauge, Trophy, Flag, Timer } from 'lucide-react';
 import type { LearningCategory } from '@/lib/stores/learning-game-store';
@@ -16,6 +16,9 @@ interface RaceHUD3DProps {
   totalLaps: number;
   time: number;
   bestLapTime?: number;
+  lapTimes?: number[];
+  lapNotification?: string | null;
+  positionNotification?: { text: string; direction: 'up' | 'down' } | null;
   isPaused: boolean;
   isFinished: boolean;
   countdown?: number | null;
@@ -23,6 +26,8 @@ interface RaceHUD3DProps {
   currentItem?: PowerUpType;
   playerX?: number;
   playerZ?: number;
+  playerRotation?: number;
+  aiPositions?: Array<{ x: number; z: number; color: string }>;
   onPause: () => void;
   onResume: () => void;
   onRestart: () => void;
@@ -221,77 +226,205 @@ function RaceTimer({ time, bestLap }: { time: number; bestLap?: number }) {
   );
 }
 
-function Minimap({ playerPosition, trackBounds }: {
+function Minimap({ playerPosition, playerRotation, aiPositions, trackLength, trackWidth }: {
   playerPosition: { x: number; z: number };
-  trackBounds: { minX: number; maxX: number; minZ: number; maxZ: number };
+  playerRotation: number;
+  aiPositions: Array<{ x: number; z: number; color: string }>;
+  trackLength: number;
+  trackWidth: number;
 }) {
-  const mapSize = 120;
-  const padding = 10;
+  const mapSize = 140;
+  const padding = 12;
+
+  // Track extents (matching kid-friendly track with S-curves)
+  // x range roughly: -180 to 180, z range: -100 to 100
+  const minX = -185;
+  const maxX = 185;
+  const minZ = -105;
+  const maxZ = 105;
 
   const normalizeX = (x: number) =>
-    ((x - trackBounds.minX) / (trackBounds.maxX - trackBounds.minX)) * (mapSize - padding * 2) + padding;
+    ((x - minX) / (maxX - minX)) * (mapSize - padding * 2) + padding;
   const normalizeZ = (z: number) =>
-    ((z - trackBounds.minZ) / (trackBounds.maxZ - trackBounds.minZ)) * (mapSize - padding * 2) + padding;
+    ((z - minZ) / (maxZ - minZ)) * (mapSize - padding * 2) + padding;
+
+  // Generate the actual track path to match generateKidFriendlyTrack
+  const trackPath = useMemo(() => {
+    const pts: string[] = [];
+    const segments = 96;
+    for (let i = 0; i <= segments; i++) {
+      const t = (i % segments) / segments;
+      const angle = t * Math.PI * 2;
+      let x = Math.cos(angle) * trackLength * 1.3;
+      let z = Math.sin(angle) * trackWidth;
+      x += Math.sin(angle * 2) * 25;
+      z += Math.sin(angle * 3) * 15;
+      pts.push(`${normalizeX(x).toFixed(1)},${normalizeZ(z).toFixed(1)}`);
+    }
+    return pts.join(' ');
+  }, [trackLength, trackWidth]);
+
+  const px = normalizeX(playerPosition.x);
+  const pz = normalizeZ(playerPosition.z);
 
   return (
     <div
-      className="bg-black/60 backdrop-blur-sm rounded-xl overflow-hidden"
+      className="bg-black/70 backdrop-blur-sm rounded-xl overflow-hidden border border-white/20"
       style={{ width: mapSize, height: mapSize }}
     >
-      {/* Track outline (simplified oval) */}
       <svg width={mapSize} height={mapSize} className="absolute inset-0">
-        <ellipse
-          cx={mapSize / 2}
-          cy={mapSize / 2}
-          rx={mapSize / 2 - padding}
-          ry={mapSize / 2 - padding - 10}
+        {/* Track road outline */}
+        <polyline
+          points={trackPath}
           fill="none"
           stroke="#444"
-          strokeWidth="8"
+          strokeWidth="10"
+          strokeLinejoin="round"
+          strokeLinecap="round"
         />
-        <ellipse
-          cx={mapSize / 2}
-          cy={mapSize / 2}
-          rx={mapSize / 2 - padding}
-          ry={mapSize / 2 - padding - 10}
+        {/* Track road surface */}
+        <polyline
+          points={trackPath}
           fill="none"
           stroke="#666"
-          strokeWidth="4"
+          strokeWidth="6"
+          strokeLinejoin="round"
+          strokeLinecap="round"
         />
+
+        {/* AI truck dots */}
+        {aiPositions.map((ai, i) => (
+          <circle
+            key={i}
+            cx={normalizeX(ai.x)}
+            cy={normalizeZ(ai.z)}
+            r="4"
+            fill={ai.color}
+            stroke="#000"
+            strokeWidth="1"
+          />
+        ))}
+
+        {/* Player direction arrow */}
+        <g transform={`translate(${px}, ${pz}) rotate(${(-playerRotation * 180) / Math.PI + 90})`}>
+          <polygon
+            points="0,-6 4,4 -4,4"
+            fill="#FF3333"
+            stroke="#FFF"
+            strokeWidth="1.5"
+          />
+        </g>
       </svg>
 
-      {/* Player dot */}
-      <div
-        className="absolute w-3 h-3 bg-red-500 rounded-full border-2 border-white shadow-lg"
-        style={{
-          left: normalizeX(playerPosition.x),
-          top: normalizeZ(playerPosition.z),
-          transform: 'translate(-50%, -50%)',
-        }}
-      />
+      {/* Label */}
+      <div className="absolute bottom-1 left-1/2 -translate-x-1/2 text-[8px] text-white/40 font-bold tracking-wider">
+        MAP
+      </div>
+    </div>
+  );
+}
+
+function TrafficLight({ count }: { count: number }) {
+  // 3 = all red, 2 = top two red, 1 = top red, 0 = green
+  const lights = [
+    { active: count >= 1 && count <= 3, color: '#ef4444', glow: '#ff0000' },
+    { active: count >= 1 && count <= 2, color: '#ef4444', glow: '#ff0000' },
+    { active: count === 0, color: '#22c55e', glow: '#00ff44' },
+  ];
+
+  return (
+    <div className="bg-gray-900 rounded-2xl p-3 border-4 border-gray-700 shadow-2xl flex flex-col gap-3">
+      {lights.map((light, i) => (
+        <div
+          key={i}
+          className="w-12 h-12 rounded-full border-2 transition-all duration-300"
+          style={{
+            backgroundColor: light.active ? light.color : '#333',
+            borderColor: light.active ? light.glow : '#555',
+            boxShadow: light.active ? `0 0 20px ${light.glow}, 0 0 40px ${light.glow}40` : 'none',
+          }}
+        />
+      ))}
     </div>
   );
 }
 
 function CountdownOverlay({ count }: { count: number }) {
+  const label = count === 0 ? 'GO!' : count === 1 ? 'SET' : count === 2 ? 'READY' : '';
+
   return (
     <motion.div
-      initial={{ scale: 2, opacity: 0 }}
-      animate={{ scale: 1, opacity: 1 }}
-      exit={{ scale: 0.5, opacity: 0 }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.3 }}
       className="fixed inset-0 flex items-center justify-center pointer-events-none z-50"
     >
+      {/* Dim overlay that lifts on GO */}
       <motion.div
-        key={count}
-        initial={{ scale: 1.5, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.5, opacity: 0 }}
-        className={`text-9xl font-black drop-shadow-2xl ${
-          count === 0 ? 'text-green-400' : 'text-white'
-        }`}
-      >
-        {count === 0 ? 'GO!' : count}
-      </motion.div>
+        className="absolute inset-0"
+        initial={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+        animate={{
+          backgroundColor: count === 0 ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.4)',
+        }}
+        transition={{ duration: 0.4 }}
+      />
+
+      <div className="relative flex flex-col items-center gap-6">
+        {/* Traffic light */}
+        <TrafficLight count={count} />
+
+        {/* Big number or GO */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={count}
+            initial={{ scale: 2.5, opacity: 0, y: 20 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.3, opacity: 0, y: -30 }}
+            transition={{ type: 'spring', damping: 12, stiffness: 200 }}
+            className="flex flex-col items-center"
+          >
+            <span
+              className={`font-black drop-shadow-2xl ${
+                count === 0
+                  ? 'text-green-400 text-[10rem] leading-none'
+                  : 'text-white text-9xl'
+              }`}
+              style={{ textShadow: count === 0
+                ? '0 0 30px rgba(34,197,94,0.8), 4px 4px 0 rgba(0,0,0,0.6)'
+                : '4px 4px 0 rgba(0,0,0,0.6)'
+              }}
+            >
+              {count === 0 ? 'GO!' : count}
+            </span>
+
+            {/* Sub-label */}
+            {label && count > 0 && (
+              <motion.span
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.15 }}
+                className="text-3xl font-bold text-white/70 mt-2 tracking-widest"
+                style={{ textShadow: '2px 2px 0 rgba(0,0,0,0.5)' }}
+              >
+                {label}
+              </motion.span>
+            )}
+          </motion.div>
+        </AnimatePresence>
+
+        {/* Rev hint during countdown */}
+        {count > 0 && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: [0.4, 0.8, 0.4] }}
+            transition={{ repeat: Infinity, duration: 1.5 }}
+            className="text-white/60 text-sm font-bold tracking-wider mt-2"
+          >
+            Hold W or GAS to rev!
+          </motion.div>
+        )}
+      </div>
     </motion.div>
   );
 }
@@ -352,15 +485,23 @@ function PauseMenu({
 function FinishScreen({
   position,
   time,
+  lapTimes,
+  bestLapTime,
+  totalLaps,
   onRestart,
   onExit,
 }: {
   position: number;
   time: number;
+  lapTimes: number[];
+  bestLapTime?: number;
+  totalLaps: number;
   onRestart: () => void;
   onExit: () => void;
 }) {
   const suffix = position === 1 ? 'st' : position === 2 ? 'nd' : position === 3 ? 'rd' : 'th';
+  const trophyColor = position === 1 ? 'text-yellow-400' : position === 2 ? 'text-gray-300' : position === 3 ? 'text-orange-400' : 'text-gray-500';
+  const podiumMessage = position === 1 ? 'WINNER!' : position <= 3 ? 'Great Race!' : 'Keep Practicing!';
 
   return (
     <motion.div
@@ -372,19 +513,78 @@ function FinishScreen({
         initial={{ scale: 0.8, y: 50 }}
         animate={{ scale: 1, y: 0 }}
         transition={{ type: 'spring', damping: 15 }}
-        className="text-center"
+        className="text-center max-w-md w-full mx-4"
       >
-        <Trophy className={`w-24 h-24 mx-auto mb-4 ${
-          position === 1 ? 'text-yellow-400' : position === 2 ? 'text-gray-300' : position === 3 ? 'text-orange-400' : 'text-gray-500'
-        }`} />
+        <Trophy className={`w-20 h-20 mx-auto mb-3 ${trophyColor}`} />
 
-        <h2 className="text-5xl font-black text-white mb-2">
+        <h2 className="text-5xl font-black text-white mb-1">
           {position}{suffix} Place!
         </h2>
+        <p className="text-lg text-white/50 mb-5">{podiumMessage}</p>
 
-        <p className="text-2xl text-white/60 mb-8">
-          Time: {formatTime(time)}
-        </p>
+        {/* Stats card */}
+        <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-5 mb-6 text-left border border-white/10">
+          {/* Total time */}
+          <div className="flex justify-between items-center mb-3 pb-3 border-b border-white/10">
+            <span className="text-white/60 font-semibold flex items-center gap-2">
+              <Timer className="w-4 h-4" /> Total Time
+            </span>
+            <span className="text-2xl font-mono font-black text-white">{formatTime(time)}</span>
+          </div>
+
+          {/* Lap breakdown */}
+          {lapTimes.length > 0 && (
+            <div className="space-y-2 mb-3 pb-3 border-b border-white/10">
+              {lapTimes.map((lt, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.3 + i * 0.15 }}
+                  className="flex justify-between items-center"
+                >
+                  <span className="text-white/50 text-sm">
+                    <Flag className="w-3 h-3 inline mr-1" />
+                    Lap {i + 1}
+                  </span>
+                  <span className={`font-mono text-sm font-bold ${
+                    bestLapTime && lt === bestLapTime ? 'text-green-400' : 'text-white/70'
+                  }`}>
+                    {formatTime(lt)}
+                    {bestLapTime && lt === bestLapTime && (
+                      <span className="text-xs ml-1 text-green-400">BEST</span>
+                    )}
+                  </span>
+                </motion.div>
+              ))}
+              {/* If fewer laps recorded than total (edge case), show placeholders */}
+              {lapTimes.length < totalLaps && Array.from({ length: totalLaps - lapTimes.length }).map((_, i) => (
+                <div key={`empty-${i}`} className="flex justify-between items-center">
+                  <span className="text-white/30 text-sm">
+                    <Flag className="w-3 h-3 inline mr-1" />
+                    Lap {lapTimes.length + i + 1}
+                  </span>
+                  <span className="font-mono text-sm text-white/30">--:--.--</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Best lap highlight */}
+          {bestLapTime && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.8 }}
+              className="flex justify-between items-center"
+            >
+              <span className="text-green-400/80 font-semibold text-sm flex items-center gap-1">
+                <Gauge className="w-4 h-4" /> Best Lap
+              </span>
+              <span className="font-mono font-bold text-green-400">{formatTime(bestLapTime)}</span>
+            </motion.div>
+          )}
+        </div>
 
         <div className="flex gap-4 justify-center">
           <button
@@ -552,6 +752,9 @@ export function RaceHUD3D({
   totalLaps,
   time,
   bestLapTime,
+  lapTimes = [],
+  lapNotification = null,
+  positionNotification = null,
   isPaused,
   isFinished,
   countdown,
@@ -559,6 +762,8 @@ export function RaceHUD3D({
   currentItem = null,
   playerX = 0,
   playerZ = 0,
+  playerRotation = 0,
+  aiPositions = [],
   onPause,
   onResume,
   onRestart,
@@ -618,8 +823,8 @@ export function RaceHUD3D({
         </div>
       </div>
 
-      {/* Top center - LAP counter */}
-      <div className="fixed top-4 left-1/2 -translate-x-1/2 z-40 pointer-events-none">
+      {/* Top center - LAP counter (below mode toggle) */}
+      <div className="fixed top-16 left-1/2 -translate-x-1/2 z-40 pointer-events-none">
         <div className="bg-black/70 backdrop-blur-sm rounded-lg px-6 py-2 border-2 border-white/30">
           <div className="flex items-center gap-2">
             <Flag className="w-5 h-5 text-white" />
@@ -652,7 +857,10 @@ export function RaceHUD3D({
       <div className="fixed bottom-4 right-4 z-40 pointer-events-none">
         <Minimap
           playerPosition={{ x: playerX, z: playerZ }}
-          trackBounds={{ minX: -120, maxX: 120, minZ: -80, maxZ: 80 }}
+          playerRotation={playerRotation}
+          aiPositions={aiPositions}
+          trackLength={120}
+          trackWidth={70}
         />
       </div>
 
@@ -671,6 +879,83 @@ export function RaceHUD3D({
         )}
       </AnimatePresence>
 
+      {/* Lap change notification */}
+      <AnimatePresence>
+        {lapNotification && (
+          <motion.div
+            key={lapNotification}
+            initial={{ opacity: 0, scale: 0.5, y: 30 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 1.3, y: -20 }}
+            transition={{ type: 'spring', damping: 12, stiffness: 200 }}
+            className="fixed top-1/3 left-1/2 -translate-x-1/2 z-50 pointer-events-none"
+          >
+            <div
+              className="px-10 py-4 rounded-2xl border-2"
+              style={{
+                background: lapNotification === 'FINAL LAP!'
+                  ? 'linear-gradient(135deg, rgba(239,68,68,0.9), rgba(220,38,38,0.9))'
+                  : 'linear-gradient(135deg, rgba(59,130,246,0.9), rgba(37,99,235,0.9))',
+                borderColor: lapNotification === 'FINAL LAP!'
+                  ? 'rgba(252,165,165,0.6)'
+                  : 'rgba(147,197,253,0.6)',
+                boxShadow: lapNotification === 'FINAL LAP!'
+                  ? '0 0 40px rgba(239,68,68,0.5)'
+                  : '0 0 40px rgba(59,130,246,0.5)',
+                backdropFilter: 'blur(8px)',
+              }}
+            >
+              <span
+                className="text-4xl font-black text-white tracking-wider"
+                style={{ textShadow: '3px 3px 0 rgba(0,0,0,0.4)' }}
+              >
+                {lapNotification}
+              </span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Position change notification */}
+      <AnimatePresence>
+        {positionNotification && (
+          <motion.div
+            key={positionNotification.text + positionNotification.direction}
+            initial={{ opacity: 0, x: positionNotification.direction === 'up' ? -60 : 60, scale: 0.8 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -30 }}
+            transition={{ type: 'spring', damping: 14, stiffness: 250 }}
+            className="fixed top-[45%] left-1/2 -translate-x-1/2 z-50 pointer-events-none"
+          >
+            <div
+              className="flex items-center gap-3 px-6 py-3 rounded-xl border-2"
+              style={{
+                background: positionNotification.direction === 'up'
+                  ? 'linear-gradient(135deg, rgba(34,197,94,0.9), rgba(22,163,74,0.9))'
+                  : 'linear-gradient(135deg, rgba(239,68,68,0.85), rgba(220,38,38,0.85))',
+                borderColor: positionNotification.direction === 'up'
+                  ? 'rgba(134,239,172,0.5)'
+                  : 'rgba(252,165,165,0.5)',
+                boxShadow: positionNotification.direction === 'up'
+                  ? '0 0 30px rgba(34,197,94,0.4)'
+                  : '0 0 30px rgba(239,68,68,0.4)',
+                backdropFilter: 'blur(8px)',
+              }}
+            >
+              <span className="text-2xl">
+                {positionNotification.direction === 'up' ? '\u25B2' : '\u25BC'}
+              </span>
+              <span
+                className="text-3xl font-black text-white tracking-wide"
+                style={{ textShadow: '2px 2px 0 rgba(0,0,0,0.3)' }}
+              >
+                {positionNotification.text}
+              </span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Pause menu */}
       <AnimatePresence>
         {isPaused && (
@@ -684,6 +969,9 @@ export function RaceHUD3D({
           <FinishScreen
             position={position}
             time={time}
+            lapTimes={lapTimes}
+            bestLapTime={bestLapTime}
+            totalLaps={totalLaps}
             onRestart={onRestart}
             onExit={onExit}
           />

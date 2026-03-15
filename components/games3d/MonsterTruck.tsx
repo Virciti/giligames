@@ -10,6 +10,7 @@ import {
 import * as THREE from 'three';
 import { DustTrail, ExhaustSmoke, BoostFlame } from './particles';
 import { getTerrainHeight, isOnBridge, isInTunnel, isInMudPit } from './JumpArena';
+import { getRaceTrackHeight } from './Track3D';
 
 // Cybertruck dimensions - bigger tires, longer body
 const BODY_WIDTH = 2.6;
@@ -48,6 +49,7 @@ interface MonsterTruckProps {
   isPlayer?: boolean;
   gameMode?: 'race' | 'jump';
   speedMultiplier?: number;
+  spinUntil?: number;
 }
 
 // Cybertruck wheel with aggressive off-road treads and pentagonal aero covers
@@ -713,6 +715,7 @@ export function MonsterTruck({
   isPlayer = false,
   gameMode = 'race',
   speedMultiplier = 1,
+  spinUntil = 0,
 }: MonsterTruckProps) {
   const chassisRef = useRef<RapierRigidBody>(null);
   const steerAngle = useRef(0);
@@ -729,6 +732,10 @@ export function MonsterTruck({
   // Track position for particle effects (refs to avoid re-renders in useFrame)
   const truckPosRef = useRef(new THREE.Vector3(position[0], position[1], position[2]));
   const throttleRef = useRef(0);
+  // Reusable objects to avoid per-frame allocations
+  const _tmpQuat = useRef(new THREE.Quaternion());
+  const _tmpEuler = useRef(new THREE.Euler());
+  const _tmpVec = useRef(new THREE.Vector3());
 
   // Theme-appropriate secondary colors for Monster Jam trucks
   const secondaryColors: Record<string, string> = {
@@ -763,8 +770,15 @@ export function MonsterTruck({
     const effectiveMaxSpeed = (gameMode === 'jump' ? JUMP_MODE_SPEED : MAX_SPEED) * speedMultiplier;
     const effectiveAcceleration = ACCELERATION * speedMultiplier;
 
+    // SPIN/SLIP — banana hit overrides normal controls
+    const isSpinning = spinUntil > 0 && performance.now() / 1000 < spinUntil;
+
     // ARCADE PHYSICS
-    if (input.forward) {
+    if (isSpinning) {
+      // Rapid uncontrolled spin + heavy speed loss
+      currentSpeed.current *= 0.92; // Bleed speed fast
+      currentRotation.current += 8 * delta; // Fast spin (~1.3 rev/s)
+    } else if (input.forward) {
       const boost = input.boost ? 1.4 : 1;
       currentSpeed.current = Math.min(effectiveMaxSpeed * boost, currentSpeed.current + effectiveAcceleration * delta);
     } else if (input.backward) {
@@ -781,13 +795,14 @@ export function MonsterTruck({
     }
 
     // Steering - kid-friendly with auto-straightening assist
+    // Skip normal steering while spinning from a banana hit
     const speedFactor = Math.abs(currentSpeed.current) / MAX_SPEED;
     const turnMultiplier = 1 - (speedFactor * TURN_SPEED_REDUCTION);
     const effectiveTurnSpeed = TURN_SPEED * turnMultiplier;
 
     const isSteering = input.left || input.right;
 
-    if (Math.abs(currentSpeed.current) > 0.5) {
+    if (!isSpinning && Math.abs(currentSpeed.current) > 0.5) {
       if (input.left) {
         currentRotation.current += effectiveTurnSpeed * delta * Math.sign(currentSpeed.current);
       }
@@ -984,15 +999,39 @@ export function MonsterTruck({
         verticalVelocity.current = Math.max(0, verticalVelocity.current);
       }
     } else {
-      // Race mode - stay at ground level
-      currentY.current = groundHeight;
+      // Race mode - follow track elevation with vertical physics
+      const trackH = getRaceTrackHeight(finalX, finalZ);
+      groundHeight = WHEEL_RADIUS + 0.5 + trackH;
+
+      smoothGroundHeight.current = THREE.MathUtils.lerp(
+        smoothGroundHeight.current,
+        groundHeight,
+        Math.min(1, 12 * delta)
+      );
+      const smoothGround = smoothGroundHeight.current;
+
+      if (currentY.current > smoothGround + 0.15) {
+        // Airborne - apply gravity
+        isAirborne.current = true;
+        verticalVelocity.current -= GRAVITY * delta;
+        currentY.current += verticalVelocity.current * delta;
+        if (currentY.current <= smoothGround) {
+          currentY.current = smoothGround;
+          verticalVelocity.current = 0;
+          isAirborne.current = false;
+        }
+      } else {
+        isAirborne.current = false;
+        currentY.current = smoothGround;
+        verticalVelocity.current = 0;
+      }
     }
 
     // Apply position
-    const finalY = gameMode === 'jump' ? currentY.current : WHEEL_RADIUS + 0.5;
+    const finalY = currentY.current;
     chassis.setTranslation({ x: finalX, y: finalY, z: finalZ }, true);
     chassis.setRotation(
-      new THREE.Quaternion().setFromEuler(new THREE.Euler(0, currentRotation.current, 0)),
+      _tmpQuat.current.setFromEuler(_tmpEuler.current.set(0, currentRotation.current, 0)),
       true
     );
 
@@ -1004,8 +1043,8 @@ export function MonsterTruck({
 
     if (onPositionUpdate) {
       onPositionUpdate(
-        new THREE.Vector3(finalX, finalY, finalZ),
-        new THREE.Euler(0, currentRotation.current, 0),
+        _tmpVec.current.set(finalX, finalY, finalZ),
+        _tmpEuler.current.set(0, currentRotation.current, 0),
         Math.abs(currentSpeed.current)
       );
     }
@@ -1063,6 +1102,7 @@ export function MonsterTruck({
             pipePositionRef={truckPosRef}
             truckRotation={currentRotation.current}
             throttleRef={throttleRef}
+            speed={Math.abs(currentSpeed.current)}
             isActive={true}
           />
 
@@ -1072,6 +1112,7 @@ export function MonsterTruck({
             rotation={currentRotation.current}
             isActive={input.boost}
             intensity={1.5}
+            speed={Math.abs(currentSpeed.current)}
           />
         </>
       )}

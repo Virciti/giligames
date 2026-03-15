@@ -11,6 +11,15 @@ interface Track3DProps {
   width?: number;
 }
 
+/** Returns the track elevation at world position (x, z) for the race track.
+ *  Gentle rolling hills using low-frequency sine waves. */
+export function getRaceTrackHeight(x: number, z: number): number {
+  const h1 = Math.sin(x * 0.02) * 1.5;
+  const h2 = Math.sin(z * 0.025) * 1.0;
+  const h3 = Math.sin((x * 0.7 + z * 0.5) * 0.018) * 0.8;
+  return Math.max(0, h1 + h2 + h3);
+}
+
 // Generate track waypoints for an oval
 function generateOvalTrack(length: number, width: number) {
   const points: THREE.Vector3[] = [];
@@ -69,19 +78,15 @@ function RoadSurface({ points, roadWidth = 15 }: { points: THREE.Vector3[]; road
       const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
 
       // Left edge
-      positions.push(
-        point.x - normal.x * roadWidth / 2,
-        0.01,
-        point.z - normal.z * roadWidth / 2
-      );
+      const lx = point.x - normal.x * roadWidth / 2;
+      const lz = point.z - normal.z * roadWidth / 2;
+      positions.push(lx, getRaceTrackHeight(lx, lz) + 0.01, lz);
       uvs.push(0, t * 20);
 
       // Right edge
-      positions.push(
-        point.x + normal.x * roadWidth / 2,
-        0.01,
-        point.z + normal.z * roadWidth / 2
-      );
+      const rx = point.x + normal.x * roadWidth / 2;
+      const rz = point.z + normal.z * roadWidth / 2;
+      positions.push(rx, getRaceTrackHeight(rx, rz) + 0.01, rz);
       uvs.push(1, t * 20);
     }
 
@@ -140,12 +145,13 @@ function RoadMarkings({ points, roadWidth = 15 }: { points: THREE.Vector3[]; roa
 
         const x = point.x + normal.x * offset;
         const z = point.z + normal.z * offset;
+        const h = getRaceTrackHeight(x, z);
 
         // Left edge of stripe
-        positions.push(x - normal.x * 0.2, 0.025, z - normal.z * 0.2);
+        positions.push(x - normal.x * 0.2, h + 0.025, z - normal.z * 0.2);
         uvs.push(0, t * 40);
         // Right edge of stripe
-        positions.push(x + normal.x * 0.2, 0.025, z + normal.z * 0.2);
+        positions.push(x + normal.x * 0.2, h + 0.025, z + normal.z * 0.2);
         uvs.push(1, t * 40);
       }
 
@@ -235,7 +241,71 @@ function StartFinishLine({ position, rotation, width }: {
   );
 }
 
-// Highway metal guardrail
+// Racing rumble strip / curbing (red-white striped edge markers like F1/Mario Kart)
+function RumbleStrip({ points, offset, roadWidth }: {
+  points: THREE.Vector3[];
+  offset: number;
+  roadWidth: number;
+}) {
+  const curve = useMemo(() => new THREE.CatmullRomCurve3(points, true), [points]);
+
+  const geometry = useMemo(() => {
+    const positions: number[] = [];
+    const colors: number[] = [];
+    const stripWidth = 1.8;
+    const segments = 256;
+
+    const red = new THREE.Color('#E8302A');
+    const white = new THREE.Color('#F0F0F0');
+
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const point = curve.getPointAt(t);
+      const tangent = curve.getTangentAt(t);
+      const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
+
+      // Alternating color every ~2m of arc length
+      const stripeColor = Math.floor(t * segments / 2) % 2 === 0 ? red : white;
+
+      // Inner edge of strip (road-side)
+      const ix = point.x + normal.x * offset;
+      const iz = point.z + normal.z * offset;
+      const ih = getRaceTrackHeight(ix, iz) + 0.02;
+      positions.push(ix, ih, iz);
+      colors.push(stripeColor.r, stripeColor.g, stripeColor.b);
+
+      // Outer edge of strip (barrier-side) — slightly raised for curb effect
+      const sign = offset > 0 ? 1 : -1;
+      const ox = ix + normal.x * stripWidth * sign;
+      const oz = iz + normal.z * stripWidth * sign;
+      const oh = getRaceTrackHeight(ox, oz) + 0.12; // slight lip
+      positions.push(ox, oh, oz);
+      colors.push(stripeColor.r, stripeColor.g, stripeColor.b);
+    }
+
+    const indices: number[] = [];
+    for (let i = 0; i < segments; i++) {
+      const a = i * 2;
+      indices.push(a, a + 1, a + 2);
+      indices.push(a + 1, a + 3, a + 2);
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    return geo;
+  }, [curve, offset]);
+
+  return (
+    <mesh geometry={geometry} receiveShadow>
+      <meshStandardMaterial vertexColors roughness={0.6} metalness={0.05} />
+    </mesh>
+  );
+}
+
+// Highway metal guardrail with reflective strips
 function Barrier({ points, offset, height = 1.0 }: {
   points: THREE.Vector3[];
   offset: number;
@@ -253,12 +323,10 @@ function Barrier({ points, offset, height = 1.0 }: {
       const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
       const rotation = Math.atan2(tangent.x, tangent.z);
 
+      const bx = point.x + normal.x * offset;
+      const bz = point.z + normal.z * offset;
       positions.push({
-        position: new THREE.Vector3(
-          point.x + normal.x * offset,
-          0,
-          point.z + normal.z * offset
-        ),
+        position: new THREE.Vector3(bx, getRaceTrackHeight(bx, bz), bz),
         rotation,
       });
     }
@@ -286,6 +354,49 @@ function Barrier({ points, offset, height = 1.0 }: {
               <boxGeometry args={[0.14, 0.18, 4.0]} />
               <meshStandardMaterial color="#A8A8A8" metalness={0.8} roughness={0.25} />
             </mesh>
+            {/* Reflective orange strip on top of rail */}
+            <mesh position={[0, height * 0.88, 0]}>
+              <boxGeometry args={[0.16, 0.06, 4.0]} />
+              <meshStandardMaterial
+                color="#FF6600"
+                emissive="#FF4400"
+                emissiveIntensity={0.3}
+                metalness={0.5}
+                roughness={0.2}
+              />
+            </mesh>
+            {/* Reflective delineator post — every 4th barrier */}
+            {i % 4 === 0 && (
+              <group position={[0, height * 1.1, 0]}>
+                <mesh>
+                  <boxGeometry args={[0.3, 0.5, 0.08]} />
+                  <meshStandardMaterial
+                    color="#FF8800"
+                    emissive="#FF6600"
+                    emissiveIntensity={0.5}
+                    metalness={0.3}
+                    roughness={0.3}
+                  />
+                </mesh>
+                {/* Reflective chevron stripes */}
+                <mesh position={[0, 0.08, 0.045]}>
+                  <boxGeometry args={[0.25, 0.12, 0.01]} />
+                  <meshStandardMaterial
+                    color="#FFFFFF"
+                    emissive="#FFFFFF"
+                    emissiveIntensity={0.4}
+                  />
+                </mesh>
+                <mesh position={[0, -0.08, 0.045]}>
+                  <boxGeometry args={[0.25, 0.12, 0.01]} />
+                  <meshStandardMaterial
+                    color="#FFFFFF"
+                    emissive="#FFFFFF"
+                    emissiveIntensity={0.4}
+                  />
+                </mesh>
+              </group>
+            )}
           </group>
           <CuboidCollider args={[0.15, height / 2, 2]} position={[0, height * 0.5, 0]} />
         </RigidBody>
@@ -622,9 +733,13 @@ export function Track3D({
       {/* Road markings */}
       <RoadMarkings points={trackPoints} roadWidth={roadWidth} />
 
+      {/* Rumble strips / curbing along both road edges */}
+      <RumbleStrip points={trackPoints} offset={-(roadWidth / 2 - 0.5)} roadWidth={roadWidth} />
+      <RumbleStrip points={trackPoints} offset={roadWidth / 2 - 0.5} roadWidth={roadWidth} />
+
       {/* Start/Finish line - positioned at track's easternmost point */}
       <StartFinishLine
-        position={[length * 1.3, 0, 0]}
+        position={[length * 1.3, getRaceTrackHeight(length * 1.3, 0), 0]}
         rotation={Math.PI / 2}
         width={roadWidth}
       />
@@ -658,7 +773,7 @@ export function Track3D({
       <StadiumLight position={[0, 0, width + 18]} />
 
       {/* Start/Finish gantry */}
-      <group position={[length * 1.3 - 5, 0, 0]}>
+      <group position={[length * 1.3 - 5, getRaceTrackHeight(length * 1.3 - 5, 0), 0]}>
         {/* Support poles */}
         <mesh position={[0, 5, -roadWidth / 2 - 2]} castShadow>
           <cylinderGeometry args={[0.4, 0.5, 10, 8]} />
