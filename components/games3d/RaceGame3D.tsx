@@ -232,6 +232,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
   const [phase, setPhase] = useState<GamePhase>('countdown');
   const [countdown, setCountdown] = useState<number | null>(3);
   const [raceTime, setRaceTime] = useState(0);
+  const raceTimeRef = useRef(0);
   const [lap, setLap] = useState(1);
   const [position, setPosition] = useState(1);
   const [coins, setCoins] = useState(0);
@@ -317,6 +318,8 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
   const [hudPosition, setHudPosition] = useState({ x: GRID_POSITIONS[0][0], z: GRID_POSITIONS[0][2] });
   const [hudRotationY, setHudRotationY] = useState(RACE_START_ROTATION);
   const [hudSpeed, setHudSpeed] = useState(0);
+  const AI_COLORS = useRef(['#228B22', '#FF4500', '#32CD32']).current;
+  const [hudAiPositions, setHudAiPositions] = useState<Array<{ x: number; z: number; color: string }>>([]);
 
   // Learning challenge state
   const learningStore = useLearningChallengeStore();
@@ -382,14 +385,14 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
       const playerProgress = playerProgressRef.current + (lap - 1);
       const allProgress = [
         playerProgress,
-        ...aiProgressRef.current.map((p, i) => p + Math.floor(raceTime / 30)) // Simple lap simulation
+        ...aiProgressRef.current.map((p, i) => p + Math.floor(raceTimeRef.current / 30)) // Simple lap simulation
       ];
 
       const sortedProgress = [...allProgress].sort((a, b) => b - a);
       const playerPosition = sortedProgress.indexOf(playerProgress) + 1;
 
       // Detect position change and show notification
-      if (playerPosition !== prevPositionRef.current && raceTime > 1) {
+      if (playerPosition !== prevPositionRef.current && raceTimeRef.current > 1) {
         const movedUp = playerPosition < prevPositionRef.current;
         const suffix = playerPosition === 1 ? 'st' : playerPosition === 2 ? 'nd' : playerPosition === 3 ? 'rd' : 'th';
         setPositionNotification({
@@ -404,7 +407,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     }, 100);
 
     return () => clearInterval(interval);
-  }, [phase, lap, raceTime]);
+  }, [phase, lap]);
 
   // Handle keyboard input
   useEffect(() => {
@@ -520,7 +523,11 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     if (phase !== 'racing') return;
 
     const timer = setInterval(() => {
-      setRaceTime((prev) => prev + 0.1);
+      setRaceTime((prev) => {
+        const next = prev + 0.1;
+        raceTimeRef.current = next;
+        return next;
+      });
       useLearningChallengeStore.getState().tickTimer(0.1);
     }, 100);
 
@@ -536,6 +543,9 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
       setHudPosition({ x: p.x, z: p.z });
       setHudRotationY(truckRotationRef.current.y);
       setHudSpeed(speedRef.current);
+      setHudAiPositions(aiPositionsRef.current.map((ap, i) => ({
+        x: ap.x, z: ap.z, color: AI_COLORS[i],
+      })));
     }, 100);
 
     return () => clearInterval(hudSync);
@@ -555,7 +565,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     // Detect finish-line crossing: progress wraps from high (~0.9+) to low (~0.1-)
     if (prevProgress > 0.85 && newProgress < 0.15 && phase === 'racing') {
       // Record completed lap time
-      const now = raceTime;
+      const now = raceTimeRef.current;
       const lapTime = now - lapStartTimeRef.current;
       if (lapTime > 1) { // guard against spurious double-detections
         setLapTimes((prev) => [...prev, lapTime]);
@@ -584,7 +594,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
 
     prevPlayerProgressRef.current = newProgress;
     playerProgressRef.current = newProgress;
-  }, [calculateProgress, phase, totalLaps, raceTime]);
+  }, [calculateProgress, phase, totalLaps]);
 
   // Handle AI position updates - also track positions for banana targeting
   const handleAIPositionUpdate = useCallback((index: number) => (pos: THREE.Vector3, progress: number) => {
@@ -805,6 +815,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     setPhase('countdown');
     setCountdown(3);
     setRaceTime(0);
+    raceTimeRef.current = 0;
     setLap(1);
     setPosition(1);
     setHudSpeed(0);
@@ -1117,11 +1128,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
         playerX={hudPosition.x}
         playerZ={hudPosition.z}
         playerRotation={hudRotationY}
-        aiPositions={aiPositionsRef.current.map((p, i) => ({
-          x: p.x,
-          z: p.z,
-          color: ['#228B22', '#FF4500', '#32CD32'][i],
-        }))}
+        aiPositions={hudAiPositions}
         onPause={handlePause}
         onResume={handleResume}
         onRestart={handleRestart}

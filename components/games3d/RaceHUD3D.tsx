@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Pause, Play, RotateCcw, Home, Gauge, Trophy, Flag, Timer } from 'lucide-react';
 import type { LearningCategory } from '@/lib/stores/learning-game-store';
@@ -226,7 +226,7 @@ function RaceTimer({ time, bestLap }: { time: number; bestLap?: number }) {
   );
 }
 
-function Minimap({ playerPosition, playerRotation, aiPositions, trackLength, trackWidth }: {
+const Minimap = memo(function Minimap({ playerPosition, playerRotation, aiPositions, trackLength, trackWidth }: {
   playerPosition: { x: number; z: number };
   playerRotation: number;
   aiPositions: Array<{ x: number; z: number; color: string }>;
@@ -322,7 +322,7 @@ function Minimap({ playerPosition, playerRotation, aiPositions, trackLength, tra
       </div>
     </div>
   );
-}
+});
 
 function TrafficLight({ count }: { count: number }) {
   // 3 = all red, 2 = top two red, 1 = top red, 0 = green
@@ -743,7 +743,7 @@ function FloatingScorePopup({ value, id }: { value: number; id: number }) {
   );
 }
 
-export function RaceHUD3D({
+export const RaceHUD3D = memo(function RaceHUD3D({
   speed,
   maxSpeed,
   position,
@@ -979,6 +979,6 @@ export function RaceHUD3D({
       </AnimatePresence>
     </>
   );
-}
+});
 
 export default RaceHUD3D;

@@ -22,6 +22,16 @@ const TRUCK_STYLE_MAP: Record<string, string> = {
   'truck-rainbow-racer': 'stars',
 };
 
+// Stable constants — extracted outside component to prevent re-creation each render
+const STADIUM_CAMERA_OFFSET = new THREE.Vector3(0, 5, -12);
+const STADIUM_STAR_POSITIONS: [number, number, number][] = [
+  [20, 3, 0],
+  [-20, 3, 0],
+  [0, 3, 20],
+  [0, 3, -20],
+  [30, 5, 30],
+];
+
 interface StadiumGame3DProps {
   onExit?: () => void;
 }
@@ -255,14 +265,7 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
     boost: false,
   });
 
-  // Star positions in the arena
-  const starPositions: [number, number, number][] = [
-    [20, 3, 0],
-    [-20, 3, 0],
-    [0, 3, 20],
-    [0, 3, -20],
-    [30, 5, 30],
-  ];
+  const starPositions = STADIUM_STAR_POSITIONS;
 
   // Timer
   useEffect(() => {
@@ -406,7 +409,7 @@ export function StadiumGame3D({ onExit }: StadiumGame3DProps) {
           targetRef={truckPositionRef}
           targetRotationRef={truckRotationRef}
           speedRef={speedRef}
-          offset={new THREE.Vector3(0, 5, -12)}
+          offset={STADIUM_CAMERA_OFFSET}
           lookAhead={15}
           smoothness={0.12}
         />
