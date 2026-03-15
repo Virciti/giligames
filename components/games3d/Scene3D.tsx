@@ -12,6 +12,8 @@ interface Scene3DProps {
   debug?: boolean;
   quality?: 'low' | 'medium' | 'high' | 'ultra';
   enablePostProcessing?: boolean;
+  /** Speed ref for dynamic post-processing effects (vignette intensifies at speed) */
+  speedRef?: React.RefObject<number>;
 }
 
 function LoadingFallback() {
@@ -96,6 +98,7 @@ export function Scene3D({
   debug = false,
   quality = 'high',
   enablePostProcessing = true,
+  speedRef,
 }: Scene3DProps) {
   const [dpr] = useState(quality === 'low' ? 1 : quality === 'medium' ? 1.5 : 2);
 
@@ -163,7 +166,7 @@ export function Scene3D({
       </Suspense>
 
       {/* Post-Processing Effects */}
-      {enablePostProcessing && <PostProcessing quality={quality} />}
+      {enablePostProcessing && <PostProcessing quality={quality} speedRef={speedRef} />}
     </Canvas>
   );
 }

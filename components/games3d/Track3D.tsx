@@ -11,13 +11,105 @@ interface Track3DProps {
   width?: number;
 }
 
+// ── SURFACE TYPE SYSTEM (race mode) ──
+export type RaceSurfaceType = 'road' | 'rumble' | 'dirt' | 'boost-pad' | 'oil-slick';
+
+export interface SurfaceInfo {
+  type: RaceSurfaceType;
+  /** Speed friction multiplier per frame (higher = less friction). Applied as Math.pow(value, delta*60) */
+  speedFriction: number;
+  /** Lateral grip multiplier (0 = ice, 1 = full grip) */
+  lateralGrip: number;
+  /** Dust particle color for this surface */
+  dustColor: string;
+}
+
+const SURFACE_ROAD: SurfaceInfo = { type: 'road', speedFriction: 1.0, lateralGrip: 1.0, dustColor: '#C4A070' };
+const SURFACE_RUMBLE: SurfaceInfo = { type: 'rumble', speedFriction: 0.97, lateralGrip: 0.9, dustColor: '#CC8844' };
+const SURFACE_DIRT: SurfaceInfo = { type: 'dirt', speedFriction: 0.94, lateralGrip: 0.7, dustColor: '#D2B48C' };
+const SURFACE_BOOST: SurfaceInfo = { type: 'boost-pad', speedFriction: 1.0, lateralGrip: 1.0, dustColor: '#FFAA44' };
+const SURFACE_OIL_SLICK: SurfaceInfo = { type: 'oil-slick', speedFriction: 0.98, lateralGrip: 0.25, dustColor: '#333333' };
+
+// Boost pad positions (must match RaceGame3D generateBoostPadPositions)
+const BOOST_PAD_POSITIONS = [
+  { x: 100, z: 0, radius: 5 },
+  { x: -100, z: 0, radius: 5 },
+  { x: 0, z: 60, radius: 5 },
+  { x: 0, z: -60, radius: 5 },
+];
+
+// Oil slick hazard positions — placed on curves where they're hardest to dodge
+export const OIL_SLICK_POSITIONS = [
+  { x: 65, z: 50, radius: 4 },
+  { x: -75, z: -35, radius: 3.5 },
+  { x: -50, z: 55, radius: 4 },
+  { x: 40, z: -55, radius: 3.5 },
+];
+
+// Track ramp positions — small speed bumps that launch the truck briefly
+export const TRACK_RAMP_POSITIONS = [
+  { x: 130, z: 15, angle: 0.4, width: 8, height: 1.8 },
+  { x: -120, z: -20, angle: -2.7, width: 8, height: 1.5 },
+  { x: 30, z: 65, angle: 1.8, width: 7, height: 1.2 },
+];
+
+/** Determine the surface type at a world position in race mode.
+ *  Uses the same track-center math as MonsterTruck boundary checks. */
+export function getRaceSurfaceType(x: number, z: number): SurfaceInfo {
+  // Check boost pads first (highest priority)
+  for (const pad of BOOST_PAD_POSITIONS) {
+    const dx = x - pad.x;
+    const dz = z - pad.z;
+    if (dx * dx + dz * dz < pad.radius * pad.radius) return SURFACE_BOOST;
+  }
+
+  // Check oil slick hazards (second priority)
+  for (const slick of OIL_SLICK_POSITIONS) {
+    const dx = x - slick.x;
+    const dz = z - slick.z;
+    if (dx * dx + dz * dz < slick.radius * slick.radius) return SURFACE_OIL_SLICK;
+  }
+
+  // Calculate distance from track center (matching MonsterTruck boundary logic)
+  const trackLength = 120;
+  const trackWidth = 70;
+  const trackRoadWidth = 28;
+
+  const baseAngle = Math.atan2(z / trackWidth, x / (trackLength * 1.3));
+  const waveCorrectionX = Math.sin(baseAngle * 2) * 25;
+  const waveCorrectionZ = Math.sin(baseAngle * 3) * 15;
+  const trackCenterX = Math.cos(baseAngle) * trackLength * 1.3 + waveCorrectionX;
+  const trackCenterZ = Math.sin(baseAngle) * trackWidth + waveCorrectionZ;
+
+  const distFromCenter = Math.sqrt((x - trackCenterX) ** 2 + (z - trackCenterZ) ** 2);
+  const halfRoad = trackRoadWidth / 2;
+
+  if (distFromCenter < halfRoad - 1) return SURFACE_ROAD;
+  if (distFromCenter < halfRoad + 1) return SURFACE_RUMBLE; // rumble strip zone
+  return SURFACE_DIRT; // off-road
+}
+
 /** Returns the track elevation at world position (x, z) for the race track.
- *  Gentle rolling hills using low-frequency sine waves. */
+ *  Gentle rolling hills using low-frequency sine waves + track ramps. */
 export function getRaceTrackHeight(x: number, z: number): number {
   const h1 = Math.sin(x * 0.02) * 1.5;
   const h2 = Math.sin(z * 0.025) * 1.0;
   const h3 = Math.sin((x * 0.7 + z * 0.5) * 0.018) * 0.8;
-  return Math.max(0, h1 + h2 + h3);
+  let height = Math.max(0, h1 + h2 + h3);
+
+  // Track ramps — smooth bump that launches the truck
+  for (const ramp of TRACK_RAMP_POSITIONS) {
+    const dx = x - ramp.x;
+    const dz = z - ramp.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist < ramp.width) {
+      // Cosine curve ramp shape — smooth on/off
+      const rampFactor = (1 + Math.cos(Math.PI * dist / ramp.width)) * 0.5;
+      height += ramp.height * rampFactor;
+    }
+  }
+
+  return height;
 }
 
 // Generate track waypoints for an oval
@@ -795,12 +887,109 @@ export function Track3D({
         </mesh>
       </group>
 
+      {/* Oil slick hazard patches — dark shiny puddles on the road */}
+      {OIL_SLICK_POSITIONS.map((slick, i) => (
+        <group key={`oil-${i}`} position={[slick.x, getRaceTrackHeight(slick.x, slick.z) + 0.06, slick.z]}>
+          <mesh rotation={[-Math.PI / 2, 0, 0]}>
+            <circleGeometry args={[slick.radius, 16]} />
+            <meshStandardMaterial
+              color="#1a1a2e"
+              metalness={0.9}
+              roughness={0.1}
+              transparent
+              opacity={0.75}
+            />
+          </mesh>
+          {/* Rainbow sheen on oil */}
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
+            <circleGeometry args={[slick.radius * 0.7, 12]} />
+            <meshStandardMaterial
+              color="#4a2080"
+              emissive="#2a1050"
+              emissiveIntensity={0.2}
+              metalness={0.95}
+              roughness={0.05}
+              transparent
+              opacity={0.4}
+            />
+          </mesh>
+        </group>
+      ))}
+
+      {/* Track ramps — raised speed bumps that launch the truck */}
+      {TRACK_RAMP_POSITIONS.map((ramp, i) => (
+        <group key={`ramp-${i}`} position={[ramp.x, getRaceTrackHeight(ramp.x, ramp.z), ramp.z]} rotation={[0, ramp.angle, 0]}>
+          {/* Ramp surface */}
+          <mesh position={[0, ramp.height * 0.4, 0]} castShadow>
+            <cylinderGeometry args={[ramp.width, ramp.width, ramp.height * 0.8, 16, 1, false, 0, Math.PI]} />
+            <meshStandardMaterial color="#D4A050" roughness={0.85} />
+          </mesh>
+          {/* Chevron warning stripes */}
+          <mesh position={[0, ramp.height * 0.82, -ramp.width * 0.3]} rotation={[-0.4, 0, 0]}>
+            <boxGeometry args={[ramp.width * 0.8, 0.1, 0.8]} />
+            <meshStandardMaterial color="#FFD700" emissive="#FFA500" emissiveIntensity={0.3} />
+          </mesh>
+        </group>
+      ))}
+
+      {/* Extra desert rocks — double visual density */}
+      {[
+        { x: 40, z: 140, s: 2.5 }, { x: -30, z: -140, s: 3 },
+        { x: 180, z: 40, s: 2 }, { x: -170, z: -30, s: 2.8 },
+        { x: 110, z: 110, s: 1.8 }, { x: -90, z: 130, s: 2.2 },
+        { x: 160, z: -90, s: 2.5 }, { x: -180, z: 80, s: 1.5 },
+        { x: 30, z: -150, s: 3.2 }, { x: -50, z: 160, s: 2 },
+      ].map((rock, i) => (
+        <group key={`rock2-${i}`} position={[rock.x, 0, rock.z]}>
+          <mesh position={[0, rock.s * 0.5, 0]} castShadow>
+            <dodecahedronGeometry args={[rock.s, 1]} />
+            <meshStandardMaterial color="#A0784C" roughness={0.95} />
+          </mesh>
+        </group>
+      ))}
+
+      {/* Extra cacti — spread further into the desert */}
+      {[
+        { x: 30, z: 150 }, { x: -40, z: -150 }, { x: 180, z: 60 },
+        { x: -175, z: -40 }, { x: 100, z: 130 }, { x: -120, z: 130 },
+        { x: 160, z: -100 }, { x: -170, z: 70 }, { x: 200, z: -20 },
+        { x: -200, z: -80 },
+      ].map((pos, i) => (
+        <group key={`cactus2-${i}`} position={[pos.x, 0, pos.z]}>
+          <mesh position={[0, 2.5, 0]} castShadow>
+            <cylinderGeometry args={[0.4, 0.5, 5, 8]} />
+            <meshStandardMaterial color="#2D6B30" roughness={0.8} />
+          </mesh>
+          <mesh position={[-0.6, 3, 0]} rotation={[0, 0, 0.7]} castShadow>
+            <cylinderGeometry args={[0.25, 0.3, 2, 8]} />
+            <meshStandardMaterial color="#2D6B30" roughness={0.8} />
+          </mesh>
+        </group>
+      ))}
+
+      {/* Tumbleweeds — scattered desert props */}
+      {[
+        { x: 75, z: 95 }, { x: -85, z: -75 }, { x: 140, z: -30 },
+        { x: -55, z: 110 }, { x: 100, z: -120 }, { x: -130, z: 40 },
+      ].map((pos, i) => (
+        <mesh key={`tumbleweed-${i}`} position={[pos.x, 0.8, pos.z]} castShadow>
+          <icosahedronGeometry args={[0.8, 1]} />
+          <meshStandardMaterial color="#8B7355" roughness={0.95} wireframe />
+        </mesh>
+      ))}
+
+      {/* Additional billboards along track — sponsor-style signs */}
+      <Billboard position={[length * 0.6, 8, -width * 0.8 - 10]} rotation={0.3} text="TURBO FUEL" color="#FF4500" />
+      <Billboard position={[-length * 0.5, 8, width * 0.7 + 10]} rotation={Math.PI + 0.3} text="NITRO BOOST" color="#8B00FF" />
+
       {/* Highway road signs along the track */}
       {[
         { x: 100, z: 50, rot: 0.8, text: 'SPEED ZONE' },
         { x: -80, z: -40, rot: -1.2, text: 'GIIGAMES HWY' },
         { x: 60, z: -60, rot: 2.0, text: 'DESERT RUN' },
         { x: -100, z: 30, rot: -0.5, text: 'NEXT EXIT' },
+        { x: 130, z: -40, rot: 1.5, text: 'CAUTION RAMP' },
+        { x: -60, z: 80, rot: -2.0, text: 'OIL AHEAD' },
       ].map((sign, i) => (
         <group key={`sign-${i}`} position={[sign.x, 0, sign.z]} rotation={[0, sign.rot, 0]}>
           {/* Sign post */}

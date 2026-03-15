@@ -9,6 +9,14 @@ const DEFAULT_OFFSET = new THREE.Vector3(0, 5, -10);
 /** Maximum camera angular velocity in radians/second — prevents whip-pan on sharp turns */
 const MAX_ANGULAR_VELOCITY = 2.5;
 
+// SPEED FEEL — FOV zoom at high speed
+const BASE_FOV = 60;
+const MAX_FOV = 75;
+const FOV_SPEED_THRESHOLD = 0.3; // Start FOV increase at 30% max speed
+// Speed-dependent micro-shake for terrain rumble
+const SPEED_SHAKE_MAX = 0.08; // Maximum terrain rumble intensity
+const SPEED_SHAKE_THRESHOLD = 0.5; // Start terrain rumble at 50% max speed
+
 interface FollowCameraProps {
   /** Ref to the truck's live position — read directly each frame, no React re-renders */
   targetRef: React.RefObject<THREE.Vector3>;
@@ -55,6 +63,9 @@ export function FollowCamera({
   // Camera shake state
   const shakeTimeLeft = useRef(0);
   const lastShakeTrigger = useRef(0);
+
+  // Speed feel — dynamic FOV
+  const currentFov = useRef(BASE_FOV);
 
   useFrame((_, delta) => {
     const target = targetRef.current;
@@ -178,6 +189,22 @@ export function FollowCamera({
       camera.position.x += (Math.random() - 0.5) * 2 * magnitude;
       camera.position.y += (Math.random() - 0.5) * 2 * magnitude * 0.6;
       camera.position.z += (Math.random() - 0.5) * 2 * magnitude;
+    }
+
+    // ── SPEED FEEL: Dynamic FOV ──
+    // FOV widens at high speed for a sense of velocity (60° → 75°)
+    const fovSpeedFactor = Math.max(0, (speedFactor - FOV_SPEED_THRESHOLD) / (1 - FOV_SPEED_THRESHOLD));
+    const targetFov = BASE_FOV + (MAX_FOV - BASE_FOV) * fovSpeedFactor;
+    currentFov.current = THREE.MathUtils.lerp(currentFov.current, targetFov, Math.min(1, 4 * delta));
+    (camera as THREE.PerspectiveCamera).fov = currentFov.current;
+    (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
+
+    // ── SPEED FEEL: Terrain rumble micro-shake ──
+    // Subtle vibration when driving fast — adds weight feel without collision shake
+    if (speedFactor > SPEED_SHAKE_THRESHOLD && shakeTimeLeft.current <= 0) {
+      const rumbleIntensity = SPEED_SHAKE_MAX * ((speedFactor - SPEED_SHAKE_THRESHOLD) / (1 - SPEED_SHAKE_THRESHOLD));
+      camera.position.x += (Math.random() - 0.5) * 2 * rumbleIntensity;
+      camera.position.y += (Math.random() - 0.5) * 2 * rumbleIntensity * 0.4;
     }
   });
 

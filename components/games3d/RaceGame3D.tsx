@@ -6,13 +6,14 @@ import * as THREE from 'three';
 import { Scene3D } from './Scene3D';
 import { MonsterTruck } from './MonsterTruck';
 import { AITruck } from './AITruck';
-import { Track3D } from './Track3D';
+import { Track3D, getRaceSurfaceType } from './Track3D';
 import { FollowCamera } from './FollowCamera';
 import { RaceHUD3D } from './RaceHUD3D';
 import { ItemBox, Collectible, BoostPad, PowerUpType } from './ItemBox';
 import { JumpArena } from './JumpArena';
 import { LearningCoinManager } from './LearningCoinManager';
 import { RaceSFX } from './RaceSFX';
+import { TouchControls } from './TouchControls';
 import { usePlayerStore } from '@/lib/stores/player-store';
 import { useLearningChallengeStore } from '@/lib/stores/learning-game-store';
 import { getTruckById } from '@/content/trucks';
@@ -32,7 +33,7 @@ interface RaceGame3DProps {
   onExit?: () => void;
 }
 
-type GamePhase = 'countdown' | 'racing' | 'paused' | 'finished';
+type GamePhase = 'preRace' | 'countdown' | 'racing' | 'paused' | 'finished';
 type GameMode = 'race' | 'jump';
 
 // Generate item box positions around the track
@@ -222,14 +223,15 @@ function DroppedBananaPeel({ position }: { position: THREE.Vector3 }) {
 }
 
 export function RaceGame3D({ onExit }: RaceGame3DProps) {
-  // Read player's selected truck from store
+  // Read player's selected truck from store (fallback), Phase 10A overrides with preRace selection
   const selectedTruckId = usePlayerStore((s) => s.selectedTruck);
   const truckData = getTruckById(selectedTruckId);
-  const playerTruckColor = truckData?.color ?? '#FF6B6B';
-  const playerTruckStyle = TRUCK_STYLE_MAP[selectedTruckId] ?? 'classic';
+  const storeTruckColor = truckData?.color ?? '#FF6B6B';
+  const storeTruckStyle = TRUCK_STYLE_MAP[selectedTruckId] ?? 'classic';
 
   const [gameMode, setGameMode] = useState<GameMode>('race');
-  const [phase, setPhase] = useState<GamePhase>('countdown');
+  // Phase 10A: Game starts in preRace phase (truck selection & starting grid)
+  const [phase, setPhase] = useState<GamePhase>('preRace');
   const [countdown, setCountdown] = useState<number | null>(3);
   const [raceTime, setRaceTime] = useState(0);
   const raceTimeRef = useRef(0);
@@ -318,6 +320,8 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
   const [hudPosition, setHudPosition] = useState({ x: GRID_POSITIONS[0][0], z: GRID_POSITIONS[0][2] });
   const [hudRotationY, setHudRotationY] = useState(RACE_START_ROTATION);
   const [hudSpeed, setHudSpeed] = useState(0);
+  const [hudDriftLevel, setHudDriftLevel] = useState(0);
+  const driftLevelRef = useRef(0);
   const AI_COLORS = useRef(['#228B22', '#FF4500', '#32CD32']).current;
   const [hudAiPositions, setHudAiPositions] = useState<Array<{ x: number; z: number; color: string }>>([]);
 
@@ -349,6 +353,30 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
   const [sfxSlip, setSfxSlip] = useState(0);
   const [sfxLap, setSfxLap] = useState(0);
   const [sfxFinish, setSfxFinish] = useState(0);
+  const [sfxItemPickup, setSfxItemPickup] = useState(0);
+  const [sfxCrowdCheer, setSfxCrowdCheer] = useState(0);
+
+  // Phase 8C: Surface type for audio (derived from truck position)
+  const [hudSurfaceType, setHudSurfaceType] = useState('road');
+
+  // Phase 8B: Hit flash overlay on collision
+  const [hitFlash, setHitFlash] = useState(false);
+
+  // Phase 9A: Tilt-to-steer toggle
+  const [tiltSteering, setTiltSteering] = useState(false);
+
+  // Phase 10A: Pre-race truck selection state
+  const [selectedStyleIndex, setSelectedStyleIndex] = useState(0);
+  const SELECTABLE_STYLES = useRef(['classic', 'shark', 'stars', 'dragon', 'flames', 'bull'] as const).current;
+  const SELECTABLE_COLORS = useRef(['#FF6B6B', '#4ECDC4', '#FFE66D', '#228B22', '#9B59B6', '#FF4500'] as const).current;
+  const SELECTABLE_NAMES = useRef(['Red Rocket', 'Blue Thunder', 'Golden Crusher', 'Green Machine', 'Purple Power', 'Orange Blaze'] as const).current;
+
+  // Phase 10C: AI finish time gaps for results
+  const [aiFinishGaps, setAiFinishGaps] = useState<number[]>([]);
+
+  // Phase 10A: Derived truck from preRace selection (overrides store)
+  const playerTruckColor = SELECTABLE_COLORS[selectedStyleIndex] ?? storeTruckColor;
+  const playerTruckStyle = SELECTABLE_STYLES[selectedStyleIndex] ?? storeTruckStyle;
 
   // Input state
   const [inputState, setInputState] = useState({
@@ -358,6 +386,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     right: false,
     brake: false,
     boost: false,
+    drift: false,
   });
 
   // Pre-generate positions
@@ -450,6 +479,10 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
         case 'shift':
           setInputState((prev) => ({ ...prev, boost: true }));
           break;
+        case 'r':
+        case 'e':
+          setInputState((prev) => ({ ...prev, drift: true }));
+          break;
         case 'escape':
         case 'p':
           if (phase === 'racing') setPhase('paused');
@@ -482,6 +515,10 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
         case 'shift':
           setInputState((prev) => ({ ...prev, boost: false }));
           break;
+        case 'r':
+        case 'e':
+          setInputState((prev) => ({ ...prev, drift: false }));
+          break;
       }
     };
 
@@ -493,6 +530,12 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
       window.removeEventListener('keyup', handleKeyUp);
     };
   }, [phase, currentItem]);
+
+  // Phase 10A: Handle starting the race from pre-race screen
+  const handleStartRace = useCallback(() => {
+    setPhase('countdown');
+    setCountdown(3);
+  }, []);
 
   // Countdown timer — 3, 2, 1, GO! then race starts
   useEffect(() => {
@@ -536,13 +579,17 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
 
   // Throttled HUD state sync — reads refs every 100ms instead of setState per frame
   useEffect(() => {
-    if (phase !== 'racing' && phase !== 'countdown') return;
+    if (phase !== 'racing' && phase !== 'countdown' && phase !== 'preRace') return;
 
     const hudSync = setInterval(() => {
       const p = truckPositionRef.current;
       setHudPosition({ x: p.x, z: p.z });
       setHudRotationY(truckRotationRef.current.y);
       setHudSpeed(speedRef.current);
+      setHudDriftLevel(driftLevelRef.current);
+      // Phase 8C: Derive surface type from truck position for audio
+      const surface = getRaceSurfaceType(truckPositionRef.current.x, truckPositionRef.current.z);
+      setHudSurfaceType(surface.type);
       setHudAiPositions(aiPositionsRef.current.map((ap, i) => ({
         x: ap.x, z: ap.z, color: AI_COLORS[i],
       })));
@@ -578,6 +625,11 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
           // Race complete!
           setPhase('finished');
           setSfxFinish((c) => c + 1);
+          setSfxCrowdCheer((c) => c + 1);
+          // Phase 10C: Generate AI finish time gaps based on position
+          const gaps = [0.8 + Math.random() * 1.2, 1.5 + Math.random() * 2.0, 3.0 + Math.random() * 3.0];
+          gaps.sort((a, b) => a - b);
+          setAiFinishGaps(gaps);
           return prevLap;
         }
         // Increase AI difficulty each lap
@@ -596,16 +648,27 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     playerProgressRef.current = newProgress;
   }, [calculateProgress, phase, totalLaps]);
 
+  // Handle drift state updates from MonsterTruck
+  const handleDriftUpdate = useCallback((isDrifting: boolean, level: number) => {
+    driftLevelRef.current = isDrifting ? level : 0;
+  }, []);
+
   // Handle AI position updates - also track positions for banana targeting
   const handleAIPositionUpdate = useCallback((index: number) => (pos: THREE.Vector3, progress: number) => {
     aiProgressRef.current[index] = progress;
     aiPositionsRef.current[index].copy(pos);
   }, []);
 
+  // Phase 9A: Touch control input handler (merges partial updates)
+  const handleTouchInput = useCallback((update: Partial<typeof inputState>) => {
+    setInputState((prev) => ({ ...prev, ...update }));
+  }, []);
+
   // Handle item collection
   const handleItemCollect = useCallback((powerUp: PowerUpType) => {
     if (!currentItem) {
       setCurrentItem(powerUp);
+      setSfxItemPickup((c) => c + 1);
     }
   }, [currentItem]);
 
@@ -789,9 +852,12 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
             setCollisionSlowdown(true);
             setBumpNotification('BUMP!');
             setSfxCollision((c) => c + 1);
+            // Phase 8B: Hit flash white vignette on collision
+            setHitFlash(true);
             setTimeout(() => {
               setCollisionSlowdown(false);
               setBumpNotification(null);
+              setHitFlash(false);
             }, 500);
             break;
           }
@@ -812,8 +878,8 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
   }, []);
 
   const handleRestart = useCallback(() => {
-    setPhase('countdown');
-    setCountdown(3);
+    setPhase('preRace');
+    setCountdown(null);
     setRaceTime(0);
     raceTimeRef.current = 0;
     setLap(1);
@@ -833,6 +899,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
       right: false,
       brake: false,
       boost: false,
+      drift: false,
     });
     aiProgressRef.current = [0, 0, 0];
     playerProgressRef.current = 0;
@@ -845,6 +912,10 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     setSfxSlip(0);
     setSfxLap(0);
     setSfxFinish(0);
+    setSfxItemPickup(0);
+    setSfxCrowdCheer(0);
+    setHitFlash(false);
+    setAiFinishGaps([]);
     setLapTimes([]);
     lapStartTimeRef.current = 0;
     setBananaScoreCount(0);
@@ -899,6 +970,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
     right: false,
     brake: false,
     boost: false,
+    drift: false,
   };
 
   const isRacing = phase === 'racing';
@@ -940,7 +1012,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
       {/* Mode Toggle - always visible at top */}
       <ModeToggle mode={gameMode} onModeChange={handleModeChange} />
 
-      <Scene3D showSky debug={false} quality="medium">
+      <Scene3D showSky debug={false} quality="medium" speedRef={speedRef}>
         {/* RACE MODE: Track and racing elements */}
         {gameMode === 'race' && (
           <>
@@ -1017,9 +1089,10 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
           position={startPosition}
           rotation={startRotation}
           color={playerTruckColor}
-          truckStyle={playerTruckStyle as 'flames' | 'shark' | 'classic' | 'dragon' | 'stars'}
+          truckStyle={playerTruckStyle as 'flames' | 'shark' | 'classic' | 'dragon' | 'stars' | 'bull'}
           inputState={activeInput}
           onPositionUpdate={handlePositionUpdate}
+          onDriftUpdate={handleDriftUpdate}
           isPlayer
           gameMode={gameMode}
           speedMultiplier={speedMultiplier * (collisionSlowdown ? 0.3 : 1)}
@@ -1033,6 +1106,7 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
               startPosition={GRID_POSITIONS[1]}
               color="#228B22"
               truckStyle="dragon"
+              personality="aggressive"
               difficulty={aiDifficulty}
               trackLength={trackLength}
               trackWidth={trackWidth}
@@ -1040,11 +1114,15 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
               onPositionUpdate={handleAIPositionUpdate(0)}
               spinUntil={aiSpinUntil[0]}
               speedMultiplier={speedMultiplier}
+              playerProgressRef={playerProgressRef}
+              currentLap={lap}
+              totalLaps={totalLaps}
             />
             <AITruck
               startPosition={GRID_POSITIONS[2]}
               color="#FF4500"
               truckStyle="bull"
+              personality="cautious"
               difficulty={aiDifficulty}
               trackLength={trackLength}
               trackWidth={trackWidth}
@@ -1052,11 +1130,15 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
               onPositionUpdate={handleAIPositionUpdate(1)}
               spinUntil={aiSpinUntil[1]}
               speedMultiplier={speedMultiplier}
+              playerProgressRef={playerProgressRef}
+              currentLap={lap}
+              totalLaps={totalLaps}
             />
             <AITruck
               startPosition={GRID_POSITIONS[3]}
               color="#32CD32"
               truckStyle="flames"
+              personality="erratic"
               difficulty={aiDifficulty}
               trackLength={trackLength}
               trackWidth={trackWidth}
@@ -1064,6 +1146,9 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
               onPositionUpdate={handleAIPositionUpdate(2)}
               spinUntil={aiSpinUntil[2]}
               speedMultiplier={speedMultiplier}
+              playerProgressRef={playerProgressRef}
+              currentLap={lap}
+              totalLaps={totalLaps}
             />
           </>
         )}
@@ -1100,10 +1185,16 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
         speed={hudSpeed}
         isRacing={phase === 'racing'}
         isBoosting={inputState.boost}
+        isDrifting={hudDriftLevel > 0}
+        isBraking={inputState.brake}
+        surfaceType={hudSurfaceType}
+        isFinalLap={lap >= totalLaps}
         collisionTrigger={sfxCollision}
         slipTrigger={sfxSlip}
         lapTrigger={sfxLap}
         finishTrigger={sfxFinish}
+        itemPickupTrigger={sfxItemPickup}
+        crowdCheerTrigger={sfxCrowdCheer}
         countdownBeep={countdown}
       />
 
@@ -1144,7 +1235,25 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
         learningCorrectCount={learningStore.correctCount}
         learningTargetCount={5}
         learningScorePopups={scorePopups}
+        driftLevel={hudDriftLevel}
+        isPreRace={phase === 'preRace'}
+        onStartRace={handleStartRace}
+        truckName={SELECTABLE_NAMES[selectedStyleIndex]}
+        truckStyle={SELECTABLE_STYLES[selectedStyleIndex]}
+        onPrevTruck={() => setSelectedStyleIndex((i) => (i - 1 + SELECTABLE_STYLES.length) % SELECTABLE_STYLES.length)}
+        onNextTruck={() => setSelectedStyleIndex((i) => (i + 1) % SELECTABLE_STYLES.length)}
+        aiFinishGaps={aiFinishGaps}
       />
+
+      {/* Phase 8B: Hit flash white vignette overlay on collision */}
+      {hitFlash && (
+        <div
+          className="fixed inset-0 z-50 pointer-events-none transition-opacity duration-500"
+          style={{
+            background: 'radial-gradient(ellipse at center, transparent 30%, rgba(255,255,255,0.6) 100%)',
+          }}
+        />
+      )}
 
       {/* Banana Score Display */}
       {gameMode === 'race' && bananaScoreCount > 0 && (
@@ -1267,50 +1376,25 @@ export function RaceGame3D({ onExit }: RaceGame3DProps) {
         </span>
       </div>
 
-      {/* Touch controls for mobile */}
-      <div className="fixed bottom-4 left-4 right-4 flex justify-between pointer-events-none z-30 md:hidden">
-        <div className="flex gap-2 pointer-events-auto">
-          <button
-            onTouchStart={() => setInputState((prev) => ({ ...prev, left: true }))}
-            onTouchEnd={() => setInputState((prev) => ({ ...prev, left: false }))}
-            className="w-16 h-16 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center active:bg-white/40"
-          >
-            <span className="text-3xl text-white">←</span>
-          </button>
-          <button
-            onTouchStart={() => setInputState((prev) => ({ ...prev, right: true }))}
-            onTouchEnd={() => setInputState((prev) => ({ ...prev, right: false }))}
-            className="w-16 h-16 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center active:bg-white/40"
-          >
-            <span className="text-3xl text-white">→</span>
-          </button>
-        </div>
+      {/* Phase 9A: Redesigned touch controls with multi-touch, haptic, tilt */}
+      <TouchControls
+        onInputChange={handleTouchInput}
+        collisionHaptic={sfxCollision}
+        boostHaptic={sfxItemPickup}
+        tiltEnabled={tiltSteering}
+        onTiltToggle={setTiltSteering}
+      />
 
-        <div className="flex gap-2 pointer-events-auto">
-          <button
-            onTouchStart={() => setInputState((prev) => ({ ...prev, brake: true }))}
-            onTouchEnd={() => setInputState((prev) => ({ ...prev, brake: false }))}
-            className="w-16 h-16 bg-red-500/50 backdrop-blur-sm rounded-xl flex items-center justify-center active:bg-red-500/70"
-          >
-            <span className="text-2xl text-white font-bold">B</span>
-          </button>
-          <button
-            onTouchStart={() => setInputState((prev) => ({ ...prev, forward: true }))}
-            onTouchEnd={() => setInputState((prev) => ({ ...prev, forward: false }))}
-            className="w-20 h-16 bg-green-500/50 backdrop-blur-sm rounded-xl flex items-center justify-center active:bg-green-500/70"
-          >
-            <span className="text-2xl text-white font-bold">GAS</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Control hints */}
+      {/* Control hints (Phase 9B: different hints for mobile vs desktop) */}
       {phase === 'countdown' && (
-        <div className="fixed bottom-32 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-sm rounded-xl px-6 py-3 z-40">
-          <p className="text-white/80 text-sm text-center">
-            <span className="font-bold text-white">Controls:</span> W/↑ = Gas, A/D or ←/→ = Steer, S/↓ = Reverse, B = Brake, Shift = Boost
+        <div className="fixed bottom-32 md:bottom-32 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-sm rounded-xl px-6 py-3 z-40">
+          <p className="text-white/80 text-sm text-center hidden md:block">
+            <span className="font-bold text-white">Controls:</span> W/↑ = Gas, A/D or ←/→ = Steer, S/↓ = Reverse, B = Brake, Shift = Boost, R/E = Drift
           </p>
-          <p className="text-yellow-400/80 text-sm text-center mt-1">
+          <p className="text-white/80 text-sm text-center md:hidden">
+            <span className="font-bold text-white">Tap buttons to drive!</span> Use GAS + steer at the same time
+          </p>
+          <p className="text-yellow-400/80 text-sm text-center mt-1 hidden md:block">
             <span className="font-bold">Space = Use Item</span> | Collect item boxes for power-ups!
           </p>
         </div>

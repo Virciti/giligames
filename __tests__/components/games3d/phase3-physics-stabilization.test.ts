@@ -138,8 +138,9 @@ describe('Phase 3: Stabilize physics output', () => {
       expect(monsterTruckSrc).toContain('Math.pow(FRICTION, delta * 60)');
     });
 
-    it('mud pit uses Math.pow for frame-rate independence', () => {
-      expect(monsterTruckSrc).toContain('Math.pow(0.96, delta * 60)');
+    it('surface friction uses Math.pow for frame-rate independence', () => {
+      // Mud/surface friction now applied via surface system: Math.pow(surface.speedFriction, delta * 60)
+      expect(monsterTruckSrc).toContain('.speedFriction, delta * 60)');
     });
 
     it('boundary speed penalties use Math.pow for frame-rate independence', () => {
